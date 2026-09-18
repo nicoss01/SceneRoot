@@ -1,0 +1,20 @@
+[Unit]
+Description=SceneRoot Media Center
+After=network-online.target local-fs.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@SCENEROOT_USER@
+WorkingDirectory=/opt/sceneroot
+Environment=NODE_ENV=production
+Environment=SCENEROOT_DATA=/var/lib/sceneroot
+Environment=SCENEROOT_MEDIA=/mnt/media,/media/%u
+Environment=DISPLAY=:0
+EnvironmentFile=-/etc/sceneroot.env
+ExecStart=/usr/bin/node --import tsx server/index.ts
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

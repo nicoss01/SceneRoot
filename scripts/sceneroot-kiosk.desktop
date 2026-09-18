@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=SceneRoot TV
+Comment=Lance SceneRoot en plein écran au démarrage
+Exec=/usr/bin/env bash -lc "$HOME/.local/bin/sceneroot-kiosk"
+Terminal=false
+X-GNOME-Autostart-enabled=true

@@ -1,0 +1,9 @@
+{
+  "name": "SceneRoot Media Center",
+  "short_name": "SceneRoot",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#030b14",
+  "theme_color": "#06111f",
+  "icons": [{ "src": "/assets/logo-square.png", "sizes": "1200x1200", "type": "image/png", "purpose": "any maskable" }]
+}
