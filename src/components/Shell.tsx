@@ -2,6 +2,7 @@ import { Clock3, Compass, Film, FolderHeart, Home, Search, Settings, Sparkles, T
 import { NavLink, useLocation } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { Brand } from './Brand';
+import { ProfileAvatar } from './ProfileAvatar';
 import type { Profile } from '../types';
 
 const links = [
@@ -21,7 +22,7 @@ export function Shell({ profile, onSwitchProfile, children }: { profile: Profile
     </aside>
     <main className="main">
       <header className="topbar">
-        <button className="profile-mini" onClick={onSwitchProfile} title="Changer de profil"><span style={{ background: profile.accent }}>{profile.avatar}</span><div><small>Bon retour,</small><strong>{profile.name}</strong></div></button>
+        <button className="profile-mini" onClick={onSwitchProfile} title="Changer de profil"><ProfileAvatar profile={profile} className="profile-avatar--mini"/><div><small>Bon retour,</small><strong>{profile.name}</strong></div></button>
         <div className="tagline">DES HISTOIRES<br/>POUR TOUS VOS SOIRS<i /></div>
         <div className="status"><Settings size={22} /><span>{clock.toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit' })}</span><Wifi size={21} /></div>
       </header>

@@ -64,4 +64,6 @@ SceneRoot sait envoyer un lien magnet à une instance Transmission locale. Il ex
 
 Cette première version est un socle fonctionnel et installable. Le scan, la médiathèque réelle, l’enrichissement automatique, la correction des correspondances, le streaming local, la persistance des notes/progressions, Transmission et CEC sont câblés. Le catalogue de démonstration reste utilisé pour les écrans qui nécessitent un historique familial prérempli.
 
-Les profils créés depuis l’interface sont persistés par l’API. Les codes optionnels sont dérivés avec `scrypt` et ne sont jamais stockés en clair. L’écran de fin de lecture enregistre la note et les qualificatifs du profil actif.
+Les profils créés ou modifiés depuis l’interface sont persistés par l’API. Chaque profil peut choisir l’un des dix avatars SceneRoot fournis, une limite d’âge et un code optionnel. Les codes sont dérivés avec `scrypt` et ne sont jamais stockés en clair. L’écran de fin de lecture enregistre la note et les qualificatifs du profil actif.
+
+Les sélecteurs de découverte, de recherche et de choix familial exposent l’ensemble des genres films et séries de la taxonomie TMDB, avec leurs libellés français. Les genres renvoyés par TVmaze restent aussi affichés lorsqu’ils proviennent du catalogue de séries libre.

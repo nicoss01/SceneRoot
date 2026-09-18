@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Route, Routes, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, BarChart3, Check, ChevronRight, Clock3, Download, Film, FolderOpen, Gauge, HardDrive, Heart, Hourglass, Lock, Monitor, Pause, Play, Plus, RefreshCw, RotateCcw, Search, ShieldCheck, Sparkles, Star, Subtitles, Timer, Tv, UserPlus, Users, Volume2, Wifi, WandSparkles, X } from 'lucide-react';
+import { ArrowLeft, BarChart3, Check, ChevronRight, Clock3, Download, Film, FolderOpen, Gauge, HardDrive, Heart, Hourglass, Lock, Monitor, Pause, Pencil, Play, Plus, RefreshCw, RotateCcw, Search, ShieldCheck, Sparkles, Star, Subtitles, Timer, Tv, Users, Volume2, Wifi, WandSparkles, X } from 'lucide-react';
 import { Brand } from './components/Brand';
 import { MediaCard } from './components/MediaCard';
 import { MetadataMatcher } from './components/MetadataMatcher';
+import { ProfileAvatar } from './components/ProfileAvatar';
+import { ProfileEditor } from './components/ProfileEditor';
 import { Shell } from './components/Shell';
 import { media, profiles } from './data/demo';
 import { resolveMedia } from './data/catalog';
+import { allGenres } from './data/genres';
 import { useCatalog } from './hooks/useCatalog';
 import { useLibrary } from './hooks/useLibrary';
 import type { MediaItem, Profile } from './types';
@@ -22,21 +25,25 @@ function BootScreen() {
   </div>;
 }
 
-function ProfileGate({ onSelect, availableProfiles, onCreated }: { onSelect: (profile: Profile) => void; availableProfiles:Profile[]; onCreated:(profile:Profile)=>void }) {
-  const [modal,setModal]=useState<'guest'|'profile'|null>(null);
-  const [name,setName]=useState(''); const [age,setAge]=useState(18); const [guestTtl,setGuestTtl]=useState('shutdown');
-  const createProfile=async()=>{const clean=name.trim()||'Nouveau profil';const fallback:Profile={id:`profile-${Date.now()}`,name:clean,ageLimit:age,avatar:clean[0].toUpperCase(),accent:'#22d3ee'};try{const response=await fetch('/api/profiles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(fallback)});const created=await response.json() as Profile;if(!response.ok)throw new Error();onCreated(created);onSelect(created)}catch{onCreated(fallback);onSelect(fallback)}};
+function ProfileGate({ onSelect, availableProfiles, onSaved }: { onSelect: (profile: Profile) => void; availableProfiles:Profile[]; onSaved:(profile:Profile)=>void }) {
+  const [modal,setModal]=useState<'guest'|'profile'|'unlock'|null>(null);
+  const [editing,setEditing]=useState<Profile|undefined>(); const [unlocking,setUnlocking]=useState<Profile|undefined>();
+  const [pin,setPin]=useState(''); const [unlockError,setUnlockError]=useState('');
+  const [age,setAge]=useState(18); const [guestTtl,setGuestTtl]=useState('shutdown');
   const createGuest=async()=>{const fallback:Profile={id:`guest-${Date.now()}`,name:'Invité',ageLimit:age,avatar:'I',accent:'#a78bfa'};try{const response=await fetch('/api/guests',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ttl:guestTtl,ageLimit:age})});const result=await response.json() as {id?:string};onSelect({...fallback,id:result.id??fallback.id})}catch{onSelect(fallback)}};
+  const choose=(profile:Profile)=>{if(!profile.locked){onSelect(profile);return}setUnlocking(profile);setPin('');setUnlockError('');setModal('unlock')};
+  const unlock=async()=>{if(!unlocking)return;setUnlockError('');try{const response=await fetch(`/api/profiles/${unlocking.id}/unlock`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin})});if(!response.ok)throw new Error('Code incorrect');onSelect(unlocking)}catch(cause){setUnlockError((cause as Error).message)}};
   return <div className="gate starscape">
     <div className="gate__head"><Brand /><span>20:24 · <Wifi size={20}/></span></div>
     <div className="gate__title"><h1>Qui regarde ?</h1><p>Choisissez votre profil pour commencer</p></div>
-    <div className="profiles">{availableProfiles.map((profile, i) => <button className={`profile-card focusable ${i === 0 ? 'is-active' : ''}`} key={profile.id} onClick={() => onSelect(profile)}>
-      <span className="avatar" style={{ '--accent': profile.accent } as React.CSSProperties}>{profile.avatar}<i /></span>
-      <strong>{profile.name} {profile.locked && <Lock size={18}/>}</strong>
-      <small>{profile.ageLimit === 18 ? 'Tout public' : `-${profile.ageLimit}`}</small>
-    </button>)}</div>
-    <div className="gate-actions"><button className="add-profile focusable" onClick={()=>setModal('profile')}><Plus /> Ajouter un profil</button><button className="add-profile focusable" onClick={()=>setModal('guest')}><Users/> Invité</button></div>
-    {modal&&<div className="modal-backdrop"><div className="profile-modal"><button className="modal-close" onClick={()=>setModal(null)}><X/></button><span className="modal-icon">{modal==='guest'?<Users/>:<UserPlus/>}</span><h2>{modal==='guest'?'Session invitée':'Nouveau profil'}</h2><p>{modal==='guest'?'Cette session ne modifiera pas les recommandations de la famille.':'Créez un espace personnel avec ses propres recommandations.'}</p>{modal==='profile'&&<label>Nom<input autoFocus value={name} onChange={e=>setName(e.target.value)} placeholder="Prénom"/></label>}<label>Limite d’âge<select value={age} onChange={e=>setAge(Number(e.target.value))}><option value="18">Tout public</option><option value="10">-10</option><option value="13">-13</option><option value="16">-16</option></select></label>{modal==='guest'&&<label>Conserver le profil<select value={guestTtl} onChange={e=>setGuestTtl(e.target.value)}><option value="shutdown">Jusqu’à extinction</option><option value="24h">24 heures</option><option value="7d">7 jours</option><option value="permanent">Conserver ce profil</option></select></label>}<button className="primary modal-submit" onClick={modal==='guest'?createGuest:createProfile}>{modal==='guest'?'Commencer':'Créer le profil'}</button></div></div>}
+    <div className="profiles">{availableProfiles.map((profile, i) => <div className={`profile-card ${i === 0 ? 'is-active' : ''}`} key={profile.id}>
+      <button className="profile-select focusable" onClick={() => choose(profile)}><ProfileAvatar profile={profile}/><strong>{profile.name} {profile.locked && <Lock size={18}/>}</strong><small>{profile.ageLimit === 18 ? 'Tout public' : `-${profile.ageLimit}`}</small></button>
+      <button className="profile-edit focusable" title={`Modifier le profil ${profile.name}`} aria-label={`Modifier le profil ${profile.name}`} onClick={()=>{setEditing(profile);setModal('profile')}}><Pencil/></button>
+    </div>)}</div>
+    <div className="gate-actions"><button className="add-profile focusable" onClick={()=>{setEditing(undefined);setModal('profile')}}><Plus /> Ajouter un profil</button><button className="add-profile focusable" onClick={()=>setModal('guest')}><Users/> Invité</button></div>
+    {modal==='profile'&&<ProfileEditor profile={editing} onClose={()=>setModal(null)} onSaved={saved=>{onSaved(saved);setModal(null);if(!editing)onSelect(saved)}}/>}
+    {modal==='guest'&&<div className="modal-backdrop"><div className="profile-modal"><button className="modal-close" onClick={()=>setModal(null)}><X/></button><span className="modal-icon"><Users/></span><h2>Session invitée</h2><p>Cette session ne modifiera pas les recommandations de la famille.</p><label>Limite d’âge<select value={age} onChange={e=>setAge(Number(e.target.value))}><option value="18">Tout public</option><option value="10">-10</option><option value="13">-13</option><option value="16">-16</option></select></label><label>Conserver le profil<select value={guestTtl} onChange={e=>setGuestTtl(e.target.value)}><option value="shutdown">Jusqu’à extinction</option><option value="24h">24 heures</option><option value="7d">7 jours</option><option value="permanent">Conserver ce profil</option></select></label><button className="primary modal-submit" onClick={createGuest}>Commencer</button></div></div>}
+    {modal==='unlock'&&unlocking&&<div className="modal-backdrop"><div className="profile-modal unlock-modal"><button className="modal-close" onClick={()=>setModal(null)}><X/></button><ProfileAvatar profile={unlocking}/><h2>{unlocking.name}</h2><p>Entrez le code de verrouillage de ce profil.</p><label>Code<input autoFocus type="password" inputMode="numeric" value={pin} onChange={event=>setPin(event.target.value.replace(/\D/g,'').slice(0,8))} onKeyDown={event=>{if(event.key==='Enter')void unlock()}}/></label>{unlockError&&<div className="profile-error">{unlockError}</div>}<button className="primary modal-submit" onClick={()=>void unlock()}><Lock/>Déverrouiller</button></div></div>}
   </div>;
 }
 
@@ -59,7 +66,7 @@ function HomePage({profile}:{profile:Profile}) {
     <Section title="Reprendre la lecture" items={media.slice(0,4)} onOpen={open} wide />
     <RemoteSection title="Dernières sorties" fallback={media.slice(4,10)} onOpen={open} />
     <Section title="Recommandé pour vous" items={media.slice(8).concat(media.slice(1,3))} onOpen={open} />
-    <section><div className="section-title"><h2>Explorer par genre</h2></div><div className="genres">{[['Film',Film],['Série',Tv],['Science-fiction',Sparkles],['Horreur',ShieldCheck],['Animation',Heart]].map(([label, Icon],i) => <button className={`genre focusable ${i===0?'is-active':''}`} key={label as string}><Icon />{label as string}</button>)}</div></section>
+    <section><div className="section-title"><h2>Explorer par genre</h2><span>{allGenres.length} genres films et séries</span></div><div className="genres">{allGenres.map((label,i) => {const Icon=i%4===0?Film:i%4===1?Tv:i%4===2?Sparkles:Heart;return <button className={`genre focusable ${i===0?'is-active':''}`} key={label} onClick={()=>navigate(`/search?genre=${encodeURIComponent(label)}`)}><Icon />{label}</button>})}</div></section>
   </>;
 }
 
@@ -82,13 +89,16 @@ function LibraryPage() {
 }
 
 function SearchPage() {
-  const [query, setQuery] = useState('planète'); const navigate = useNavigate();
+  const params=new URLSearchParams(location.search);const initialGenre=params.get('genre')??'';
+  const [query, setQuery] = useState(initialGenre?'':'planète'); const [selectedGenre,setSelectedGenre]=useState(initialGenre);const[type,setType]=useState<'all'|'film'|'serie'>('all'); const navigate = useNavigate();
   const normalized=query.toLowerCase();
-  const results = media.filter(m => !query || `${m.title} ${m.genres.join(' ')}`.toLowerCase().includes(normalized) || (normalized.includes('planète')&&m.genres.includes('Science-fiction')));
+  const results = media.filter(m => (type==='all'||m.kind===type)&&(!selectedGenre||m.genres.includes(selectedGenre))&&(!query || `${m.title} ${m.genres.join(' ')}`.toLowerCase().includes(normalized) || (normalized.includes('planète')&&m.genres.includes('Science-fiction'))));
+  const reset=()=>{setQuery('');setSelectedGenre('');setType('all')};
   return <><label className="searchbox"><Search/><input autoFocus value={query} onChange={e=>setQuery(e.target.value)} placeholder="Rechercher un film ou une série…"/><kbd>OK</kbd></label>
-    <div className="search-filter-title"><h2>Filtres</h2><button><RefreshCw/> Réinitialiser les filtres</button></div>
-    <div className="search-filters"><div className="filter-panel"><h3><Film/>Genre</h3><div><button className="on">Film</button><button>Série</button><button>SF</button><button>Horreur</button></div></div><div className="filter-panel"><h3><Timer/>Durée</h3><div><button>&lt; 1h30</button><button className="on">1h30 – 2h</button><button>&gt; 2h</button></div></div><div className="filter-panel"><h3><Star/>Notes utilisateurs</h3><div><button>≥ 5</button><button className="on">≥ 7</button><button>≥ 8</button></div></div><div className="filter-panel"><h3><Monitor/>Qualité</h3><div><button>720p</button><button className="on">1080p</button><button>4K</button></div></div></div>
-    <div className="section-title"><h2>Résultats pour « {query} »</h2><span>{results.length} résultats</span></div>
+    <div className="search-filter-title"><h2>Filtres</h2><button onClick={reset}><RefreshCw/> Réinitialiser les filtres</button></div>
+    <div className="search-filters"><div className="filter-panel"><h3><Film/>Type</h3><div>{([['all','Tous'],['film','Films'],['serie','Séries']] as const).map(([value,label])=><button className={type===value?'on':''} onClick={()=>setType(value)} key={value}>{label}</button>)}</div></div><div className="filter-panel"><h3><Timer/>Durée</h3><div><button>&lt; 1h30</button><button className="on">1h30 – 2h</button><button>&gt; 2h</button></div></div><div className="filter-panel"><h3><Star/>Notes utilisateurs</h3><div><button>≥ 5</button><button className="on">≥ 7</button><button>≥ 8</button></div></div><div className="filter-panel"><h3><Monitor/>Qualité</h3><div><button>720p</button><button className="on">1080p</button><button>4K</button></div></div></div>
+    <div className="genre-filter"><h3><Sparkles/>Tous les genres</h3><div>{allGenres.map(genre=><button className={selectedGenre===genre?'on':''} onClick={()=>setSelectedGenre(current=>current===genre?'':genre)} key={genre}>{genre}</button>)}</div></div>
+    <div className="section-title"><h2>{query?`Résultats pour « ${query} »`:selectedGenre||'Tous les contenus'}</h2><span>{results.length} résultats</span></div>
     <div className="grid">{results.map((m,i)=><MediaCard item={m} active={i===0} key={m.id} onOpen={()=>navigate(`/title/${m.id}`)}/>)}</div></>;
 }
 
@@ -99,16 +109,17 @@ function TonightPage() {
   const [kind,setKind]=useState<'film'|'serie'|'any'>('film');
   const [duration,setDuration]=useState<'short'|'medium'|'any'>('medium');
   const [mood,setMood]=useState<Mood>('Découverte');
+  const [genre,setGenre]=useState('');
   const [choosing,setChoosing]=useState(false); const [chosen,setChosen]=useState<string|null>(null);
-  const scored=useMemo(()=>media.filter(m=>kind==='any'||m.kind===kind).map((m,i)=>{
+  const scored=useMemo(()=>media.filter(m=>(kind==='any'||m.kind===kind)&&(!genre||m.genres.includes(genre))).map((m,i)=>{
     const affinities=selected.map((_,p)=>Math.max(52,Math.min(98,Math.round(82+Math.sin(i*2.1+p*1.7)*12))));
     const avg=affinities.reduce((a,b)=>a+b,0)/affinities.length;
     const disagreement=Math.max(...affinities)-Math.min(...affinities);
     return{item:m,score:Math.round(avg-disagreement*.42+(i%3===1?4:0))};
-  }).sort((a,b)=>b.score-a.score).slice(0,5),[selected,kind,duration,mood]);
+  }).sort((a,b)=>b.score-a.score).slice(0,5),[selected,kind,duration,mood,genre]);
   const pick=()=>{setChoosing(true);setChosen(null);setTimeout(()=>{setChosen(scored[Math.floor(Math.random()*Math.min(3,scored.length))]?.item.id??null);setChoosing(false)},1100)};
   return <><div className="tonight-head"><div className="welcome"><h1>Que regarde-t-on ce soir ?</h1><p>SceneRoot cherche le meilleur compromis, pas la moyenne la plus facile.</p></div><button className="primary magic" onClick={pick}><WandSparkles/>{choosing?'Choix en cours…':'Faites le choix pour nous'}</button></div>
-    <div className="chooser"><FilterGroup title="Profils">{profiles.map(p=><button className={selected.includes(p.id)?'on':''} onClick={()=>setSelected(s=>s.includes(p.id)?s.filter(x=>x!==p.id):[...s,p.id])} key={p.id}>{p.name}{selected.includes(p.id)&&<Check/>}</button>)}</FilterGroup><FilterGroup title="Envie">{(['film','serie','any'] as const).map(v=><button className={kind===v?'on':''} onClick={()=>setKind(v)} key={v}>{v==='film'?'Film':v==='serie'?'Série':'Peu importe'}</button>)}</FilterGroup><FilterGroup title="Durée">{([['short','< 1h30'],['medium','1h30–2h'],['any','Peu importe']] as const).map(([v,l])=><button className={duration===v?'on':''} onClick={()=>setDuration(v)} key={v}>{l}</button>)}</FilterGroup><FilterGroup title="Ambiance">{(['Détente','Action','Émotion','Frissons','Découverte'] as Mood[]).map(v=><button className={mood===v?'on':''} onClick={()=>setMood(v)} key={v}>{v}</button>)}</FilterGroup></div>
+    <div className="chooser"><FilterGroup title="Profils">{profiles.map(p=><button className={selected.includes(p.id)?'on':''} onClick={()=>setSelected(s=>s.includes(p.id)?s.filter(x=>x!==p.id):[...s,p.id])} key={p.id}>{p.name}{selected.includes(p.id)&&<Check/>}</button>)}</FilterGroup><FilterGroup title="Envie">{(['film','serie','any'] as const).map(v=><button className={kind===v?'on':''} onClick={()=>setKind(v)} key={v}>{v==='film'?'Film':v==='serie'?'Série':'Peu importe'}</button>)}</FilterGroup><FilterGroup title="Durée">{([['short','< 1h30'],['medium','1h30–2h'],['any','Peu importe']] as const).map(([v,l])=><button className={duration===v?'on':''} onClick={()=>setDuration(v)} key={v}>{l}</button>)}</FilterGroup><FilterGroup title="Ambiance">{(['Détente','Action','Émotion','Frissons','Découverte'] as Mood[]).map(v=><button className={mood===v?'on':''} onClick={()=>setMood(v)} key={v}>{v}</button>)}</FilterGroup><label className="tonight-genre"><strong>Genre</strong><select value={genre} onChange={event=>setGenre(event.target.value)}><option value="">Tous les genres</option>{allGenres.map(value=><option value={value} key={value}>{value}</option>)}</select></label></div>
     <div className="match-list">{scored.map((x,i)=><button className={`match-card ${chosen===x.item.id?'winner':''}`} key={x.item.id} onClick={()=>navigate(`/title/${x.item.id}`)}><div className="match-rank">{i+1}</div><div className="match-art" style={{'--a':x.item.palette[0],'--b':x.item.palette[1]} as React.CSSProperties}>{x.item.symbol}</div><div className="match-copy"><h3>{x.item.title}</h3><strong>{x.score} % compatible</strong><p>✓ Nicolas aime fortement {x.item.genres[0].toLowerCase()} · ✓ Cathy a bien noté des titres proches · ✓ Nathan ne l’a jamais vu · ✓ compatible avec les limites d’âge · {x.item.duration}</p></div><ChevronRight/></button>)}</div>
   </>;
 }
@@ -164,7 +175,9 @@ function App() {
   useEffect(()=>{fetch('/api/profiles').then(response=>response.ok?response.json():[]).then((items:Profile[])=>setSavedProfiles(items)).catch(()=>{})},[]);
   useEffect(()=>{ const handle=(e:KeyboardEvent)=>{ if(!['ArrowRight','ArrowLeft','ArrowUp','ArrowDown'].includes(e.key))return; const els=[...document.querySelectorAll<HTMLElement>('button:not([disabled]),a[href],input,select')].filter(x=>x.offsetParent!==null); const current=document.activeElement as HTMLElement; const r=current?.getBoundingClientRect(); if(!r){els[0]?.focus();return} const horizontal=e.key==='ArrowLeft'||e.key==='ArrowRight'; const sign=e.key==='ArrowLeft'||e.key==='ArrowUp'?-1:1; let best:HTMLElement|undefined,score=Infinity; for(const el of els){if(el===current)continue;const q=el.getBoundingClientRect();const dx=q.left+q.width/2-(r.left+r.width/2),dy=q.top+q.height/2-(r.top+r.height/2);const primary=horizontal?dx:dy;if(Math.sign(primary)!==sign)continue;const secondary=horizontal?dy:dx;const s=Math.abs(primary)+Math.abs(secondary)*2;if(s<score){score=s;best=el}} if(best){e.preventDefault();best.focus()}}; addEventListener('keydown',handle); return()=>removeEventListener('keydown',handle)},[]);
   if(booting)return <BootScreen/>;
-  if(!profile)return <ProfileGate availableProfiles={[...profiles,...savedProfiles.filter(saved=>!profiles.some(profile=>profile.id===saved.id))]} onCreated={created=>setSavedProfiles(current=>[...current,created])} onSelect={p=>{localStorage.setItem('sceneroot-profile',JSON.stringify(p));setProfile(p)}}/>;
+  const availableProfiles=[...profiles.map(base=>savedProfiles.find(saved=>saved.id===base.id)??base),...savedProfiles.filter(saved=>!profiles.some(base=>base.id===saved.id))];
+  const upsertProfile=(saved:Profile)=>setSavedProfiles(current=>current.some(item=>item.id===saved.id)?current.map(item=>item.id===saved.id?saved:item):[...current,saved]);
+  if(!profile)return <ProfileGate availableProfiles={availableProfiles} onSaved={upsertProfile} onSelect={p=>{localStorage.setItem('sceneroot-profile',JSON.stringify(p));setProfile(p)}}/>;
   const switchProfile=()=>{localStorage.removeItem('sceneroot-profile');setProfile(null)};
   return <Routes><Route path="/player/:id" element={<PlayerPage/>}/><Route path="/rate/:id" element={<RatingPage profile={profile}/>}/><Route path="/title/:id" element={<Shell profile={profile} onSwitchProfile={switchProfile}><DetailPage/></Shell>}/><Route path="*" element={<Shell profile={profile} onSwitchProfile={switchProfile}><Routes>
     <Route path="/" element={<HomePage profile={profile}/>}/><Route path="/films" element={<BrowsePage kind="film" title="Films"/>}/><Route path="/series" element={<BrowsePage kind="serie" title="Séries"/>}/><Route path="/discover" element={<BrowsePage title="Découvrir"/>}/><Route path="/tonight" element={<TonightPage/>}/><Route path="/library" element={<LibraryPage/>}/><Route path="/roots" element={<RootsPage/>}/><Route path="/search" element={<SearchPage/>}/><Route path="/settings" element={<SettingsPage/>}/>

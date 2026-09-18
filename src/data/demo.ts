@@ -1,10 +1,10 @@
 import type { MediaItem, Profile } from '../types';
 
 export const profiles: Profile[] = [
-  { id: 'nicolas', name: 'Nicolas', ageLimit: 18, avatar: 'N', accent: '#22d3ee' },
-  { id: 'cathy', name: 'Cathy', ageLimit: 10, locked: true, avatar: 'C', accent: '#f472b6' },
-  { id: 'nathan', name: 'Nathan', ageLimit: 13, avatar: 'N', accent: '#60a5fa' },
-  { id: 'lucie', name: 'Lucie', ageLimit: 18, avatar: 'L', accent: '#fb923c' }
+  { id: 'nicolas', name: 'Nicolas', ageLimit: 18, avatar: '/assets/avatars/geek.png', accent: '#22d3ee' },
+  { id: 'cathy', name: 'Cathy', ageLimit: 10, avatar: '/assets/avatars/amour.png', accent: '#f472b6' },
+  { id: 'nathan', name: 'Nathan', ageLimit: 13, avatar: '/assets/avatars/game.png', accent: '#60a5fa' },
+  { id: 'lucie', name: 'Lucie', ageLimit: 18, avatar: '/assets/avatars/fun.png', accent: '#38bdf8' }
 ];
 
 export const media: MediaItem[] = [
