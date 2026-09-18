@@ -30,7 +30,7 @@ Le serveur surveille périodiquement les racines locales, USB, SSD, SMB et NFS d
 5. enrichit la fiche via une source de métadonnées autorisée ;
 6. place les cas ambigus dans une file de validation manuelle.
 
-Le scan actuel réalise les étapes 1 à 4. Les endpoints sont structurés pour ajouter l'enrichissement et la file d'ambiguïtés sans changer l'interface.
+Le scan réalise maintenant les étapes 1 à 5 avec TMDB lorsqu’il est configuré, ou avec Wikipédia/TVmaze sans clé. Il réutilise le résultat `ffprobe` des fichiers inchangés et enrichit silencieusement une fiche uniquement lorsqu’une correspondance stricte et unique est trouvée. Les cas ambigus sont présentés dans « Ma médiathèque » avec affiches, années et résumés ; le choix est mémorisé pour toutes les versions et tous les épisodes portant le même titre.
 
 ## Sources et téléchargements
 

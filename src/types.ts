@@ -22,5 +22,12 @@ export interface MediaItem {
   description: string;
   palette: [string, string];
   symbol: string;
+  art?: string;
   localPath?: string;
+  source?: 'local' | 'tmdb' | 'tvmaze' | 'wikipedia';
+  sourceUrl?: string;
+  versionCount?: number;
+  episodeCount?: number;
+  sizeBytes?: number;
+  matched?: boolean;
 }

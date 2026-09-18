@@ -39,10 +39,18 @@ chromium --kiosk --noerrdialogs --disable-infobars http://127.0.0.1:4174
 
 - Les dossiers sont définis par `SCENEROOT_MEDIA` (séparés par des virgules).
 - `POST /api/library/scan` analyse récursivement MP4, MKV, WebM, AVI, MOV et M4V.
+- Les fichiers inchangés réutilisent leur analyse `ffprobe`; les correspondances corrigées ne sont pas perdues au scan suivant.
+- `GET /api/catalog` expose un catalogue paginé. TMDB est utilisé lorsqu'une clé est configurée ; sinon SceneRoot utilise Wikipédia pour les films et TVmaze pour les séries.
+- Les réponses distantes sont conservées dans `SCENEROOT_DATA/cache` pendant 6 à 24 heures. Un cache périmé reste utilisable si une source est temporairement inaccessible.
+- Après le scan, les nouveaux fichiers sont enrichis en arrière-plan uniquement lorsque le titre et l’année donnent une correspondance unique. Les cas ambigus restent intacts.
+- `GET /api/library/grouped` alimente l’écran réel « Ma médiathèque » en regroupant versions et épisodes.
+- `GET /api/metadata/search` et `PUT /api/library/:id/match` permettent de corriger un média depuis l’interface avec TMDB, Wikipédia ou TVmaze ; leurs résultats sont également mis en cache.
 - `GET /api/media/:id` diffuse les fichiers avec prise en charge des requêtes HTTP Range.
 - La lecture TV principale passe par `mpv` (`POST /api/player/:id/play`) pour MKV, HEVC, HDR, pistes audio, sous-titres et accélération matérielle. Le lecteur web reste un mode de secours.
 - FFmpeg est installé pour l’inspection/transcodage à venir.
 - Une clé TMDB peut être placée dans `/etc/sceneroot.env`. Respectez les conditions et l’attribution TMDB lors de l’activation.
+- Les données TVmaze sont fournies sous licence CC BY-SA et les fiches de films proviennent de Wikipédia anglophone sous CC BY-SA. Les liens vers les fiches sources sont conservés dans chaque résultat distant.
+- Les écrans de catalogue utilisent une pagination déclenchée par `IntersectionObserver`; les images utilisent le chargement différé natif du navigateur.
 
 ## Téléchargements
 
@@ -54,4 +62,6 @@ SceneRoot sait envoyer un lien magnet à une instance Transmission locale. Il ex
 
 ## État du produit
 
-Cette première version est un socle fonctionnel et installable. Le scan, le streaming local, la persistance des notes/progressions, Transmission et CEC sont câblés côté serveur. Le catalogue de démo illustre le rendu final ; la prochaine étape consiste à connecter les écrans aux éléments indexés et à enrichir les fiches via la source de métadonnées choisie.
+Cette première version est un socle fonctionnel et installable. Le scan, la médiathèque réelle, l’enrichissement automatique, la correction des correspondances, le streaming local, la persistance des notes/progressions, Transmission et CEC sont câblés. Le catalogue de démonstration reste utilisé pour les écrans qui nécessitent un historique familial prérempli.
+
+Les profils créés depuis l’interface sont persistés par l’API. Les codes optionnels sont dérivés avec `scrypt` et ne sont jamais stockés en clair. L’écran de fin de lecture enregistre la note et les qualificatifs du profil actif.

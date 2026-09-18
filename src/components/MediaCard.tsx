@@ -2,9 +2,9 @@ import { Play, Star } from 'lucide-react';
 import type { MediaItem } from '../types';
 
 export function MediaCard({ item, active, onOpen, wide = false }: { item: MediaItem; active?: boolean; onOpen: () => void; wide?: boolean }) {
-  const position = `${20 + (item.id.charCodeAt(0) % 5) * 17}% ${25 + (item.id.length % 4) * 20}%`;
   return <button className={`media-card focusable ${active ? 'is-active' : ''} ${wide ? 'media-card--wide' : ''}`} onClick={onOpen}>
-    <div className="media-card__art" style={{ '--a': item.palette[0], '--b': item.palette[1], '--position': position } as React.CSSProperties}>
+    <div className="media-card__art" style={{ '--a': item.palette[0], '--b': item.palette[1] } as React.CSSProperties}>
+      <img src={item.art??'/assets/sceneroot-landscape.png'} alt="" loading="lazy" decoding="async" onError={event=>{event.currentTarget.onerror=null;event.currentTarget.src='/assets/sceneroot-landscape.png'}} />
       <span className="media-card__orb" />
       <span className="media-card__symbol">{item.symbol}</span>
       {item.progress !== undefined && <span className="media-card__play"><Play size={18} fill="currentColor" /></span>}
@@ -13,7 +13,7 @@ export function MediaCard({ item, active, onOpen, wide = false }: { item: MediaI
     <div className="media-card__body">
       <strong>{item.title}</strong>
       <small>{item.kind === 'film' ? 'Film' : 'Série'} · {item.year} · {item.duration}</small>
-      <span className="media-card__rating"><Star size={14} fill="currentColor" /> {item.rating}</span>
+      {item.rating > 0 && <span className="media-card__rating"><Star size={14} fill="currentColor" /> {item.rating}</span>}
       {item.progress !== undefined && <span className="progress"><i style={{ width: `${item.progress}%` }} /></span>}
     </div>
   </button>;

@@ -1,16 +1,20 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Route, Routes, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, BarChart3, Check, ChevronRight, Clock3, Download, Film, FolderOpen, Gauge, HardDrive, Heart, Lock, Monitor, Pause, Play, Plus, RefreshCw, Search, ShieldCheck, Sparkles, Star, Subtitles, Timer, Tv, UserPlus, Users, Volume2, Wifi, WandSparkles, X } from 'lucide-react';
+import { ArrowLeft, BarChart3, Check, ChevronRight, Clock3, Download, Film, FolderOpen, Gauge, HardDrive, Heart, Hourglass, Lock, Monitor, Pause, Play, Plus, RefreshCw, RotateCcw, Search, ShieldCheck, Sparkles, Star, Subtitles, Timer, Tv, UserPlus, Users, Volume2, Wifi, WandSparkles, X } from 'lucide-react';
 import { Brand } from './components/Brand';
 import { MediaCard } from './components/MediaCard';
+import { MetadataMatcher } from './components/MetadataMatcher';
 import { Shell } from './components/Shell';
 import { media, profiles } from './data/demo';
+import { resolveMedia } from './data/catalog';
+import { useCatalog } from './hooks/useCatalog';
+import { useLibrary } from './hooks/useLibrary';
 import type { MediaItem, Profile } from './types';
 
 function BootScreen() {
   return <div className="boot-screen">
     <div className="boot-glow" />
-    <Brand vertical />
+    <img className="boot-logo" src="/assets/logo-square.png" alt="SceneRoot" />
     <p>Chargement de votre univers multimédia…</p>
     <div className="boot-progress"><i /></div>
     <div className="boot-categories"><span><Film/> FILMS</span><span><Tv/> SÉRIES</span><span><Sparkles/> DÉCOUVERTE</span><span><Users/> PROFILS</span></div>
@@ -18,15 +22,15 @@ function BootScreen() {
   </div>;
 }
 
-function ProfileGate({ onSelect }: { onSelect: (profile: Profile) => void }) {
+function ProfileGate({ onSelect, availableProfiles, onCreated }: { onSelect: (profile: Profile) => void; availableProfiles:Profile[]; onCreated:(profile:Profile)=>void }) {
   const [modal,setModal]=useState<'guest'|'profile'|null>(null);
   const [name,setName]=useState(''); const [age,setAge]=useState(18); const [guestTtl,setGuestTtl]=useState('shutdown');
-  const createProfile=()=>{const clean=name.trim()||'Nouveau profil';onSelect({id:`profile-${Date.now()}`,name:clean,ageLimit:age,avatar:clean[0].toUpperCase(),accent:'#22d3ee'})};
-  const createGuest=()=>onSelect({id:`guest-${Date.now()}`,name:'Invité',ageLimit:age,avatar:'I',accent:'#a78bfa'});
+  const createProfile=async()=>{const clean=name.trim()||'Nouveau profil';const fallback:Profile={id:`profile-${Date.now()}`,name:clean,ageLimit:age,avatar:clean[0].toUpperCase(),accent:'#22d3ee'};try{const response=await fetch('/api/profiles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(fallback)});const created=await response.json() as Profile;if(!response.ok)throw new Error();onCreated(created);onSelect(created)}catch{onCreated(fallback);onSelect(fallback)}};
+  const createGuest=async()=>{const fallback:Profile={id:`guest-${Date.now()}`,name:'Invité',ageLimit:age,avatar:'I',accent:'#a78bfa'};try{const response=await fetch('/api/guests',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ttl:guestTtl,ageLimit:age})});const result=await response.json() as {id?:string};onSelect({...fallback,id:result.id??fallback.id})}catch{onSelect(fallback)}};
   return <div className="gate starscape">
     <div className="gate__head"><Brand /><span>20:24 · <Wifi size={20}/></span></div>
     <div className="gate__title"><h1>Qui regarde ?</h1><p>Choisissez votre profil pour commencer</p></div>
-    <div className="profiles">{profiles.map((profile, i) => <button className={`profile-card focusable ${i === 0 ? 'is-active' : ''}`} key={profile.id} onClick={() => onSelect(profile)}>
+    <div className="profiles">{availableProfiles.map((profile, i) => <button className={`profile-card focusable ${i === 0 ? 'is-active' : ''}`} key={profile.id} onClick={() => onSelect(profile)}>
       <span className="avatar" style={{ '--accent': profile.accent } as React.CSSProperties}>{profile.avatar}<i /></span>
       <strong>{profile.name} {profile.locked && <Lock size={18}/>}</strong>
       <small>{profile.ageLimit === 18 ? 'Tout public' : `-${profile.ageLimit}`}</small>
@@ -40,20 +44,41 @@ function Section({ title, items, onOpen, wide = false }: { title: string; items:
   return <section><div className="section-title"><h2>{title}</h2><button>Tout voir <ChevronRight size={18}/></button></div><div className="rail">{items.map((m, i) => <MediaCard key={m.id} item={m} active={i === 0} wide={wide} onOpen={() => onOpen(m)} />)}</div></section>;
 }
 
+function RemoteSection({ title, fallback, onOpen }: { title:string; fallback:MediaItem[]; onOpen:(item:MediaItem)=>void }) {
+  const sectionRef=useRef<HTMLElement>(null);const[visible,setVisible]=useState(false);
+  const {items,loading,source}=useCatalog(undefined,6,visible);
+  useEffect(()=>{const node=sectionRef.current;if(!node)return;const observer=new IntersectionObserver(entries=>{if(entries[0]?.isIntersecting){setVisible(true);observer.disconnect()}},{rootMargin:'320px'});observer.observe(node);return()=>observer.disconnect()},[]);
+  const displayed=items.length?items:fallback;
+  return <section ref={sectionRef}><div className="section-title"><h2>{title}</h2><span>{loading?'Chargement…':source?`Source : ${source}`:''}</span></div><div className="rail">{displayed.map((item,index)=><MediaCard key={item.id} item={item} active={index===0} onOpen={()=>onOpen(item)}/>)}</div></section>;
+}
+
 function HomePage({profile}:{profile:Profile}) {
   const navigate = useNavigate(); const open = (m: MediaItem) => navigate(`/title/${m.id}`);
   return <>
     <div className="welcome home-welcome"><h1>Bonsoir, {profile.name}</h1><p>De belles histoires vous attendent.</p></div>
     <Section title="Reprendre la lecture" items={media.slice(0,4)} onOpen={open} wide />
-    <Section title="Dernières sorties" items={media.slice(4,10)} onOpen={open} />
+    <RemoteSection title="Dernières sorties" fallback={media.slice(4,10)} onOpen={open} />
     <Section title="Recommandé pour vous" items={media.slice(8).concat(media.slice(1,3))} onOpen={open} />
     <section><div className="section-title"><h2>Explorer par genre</h2></div><div className="genres">{[['Film',Film],['Série',Tv],['Science-fiction',Sparkles],['Horreur',ShieldCheck],['Animation',Heart]].map(([label, Icon],i) => <button className={`genre focusable ${i===0?'is-active':''}`} key={label as string}><Icon />{label as string}</button>)}</div></section>
   </>;
 }
 
 function BrowsePage({ kind, title }: { kind?: 'film'|'serie'; title: string }) {
-  const navigate = useNavigate(); const list = kind ? media.filter(m => m.kind === kind) : media;
-  return <><div className="welcome"><h1>{title}</h1><p>{list.length} titres disponibles sur votre SceneRoot.</p></div><div className="grid">{list.concat(list).map((m,i)=><MediaCard item={m} active={i===0} key={`${m.id}-${i}`} onOpen={()=>navigate(`/title/${m.id}`)}/>)}</div></>;
+  const navigate=useNavigate();const sentinel=useRef<HTMLDivElement>(null);const catalog=useCatalog(kind,15,true);const fallback=kind?media.filter(m=>m.kind===kind):media;const list=catalog.items.length?catalog.items:fallback;
+  useEffect(()=>{const node=sentinel.current;if(!node)return;const observer=new IntersectionObserver(entries=>{if(entries[0]?.isIntersecting&&!catalog.loading&&catalog.hasMore)void catalog.loadMore()},{rootMargin:'500px'});observer.observe(node);return()=>observer.disconnect()},[catalog.hasMore,catalog.loadMore,catalog.loading]);
+  return <><div className="welcome"><h1>{title}</h1><p>{catalog.items.length?`${catalog.items.length} titres chargés depuis ${catalog.source}.`:`${fallback.length} titres disponibles sur votre SceneRoot.`}</p></div><div className="grid">{list.map((item,index)=><MediaCard item={item} active={index===0} key={item.id} onOpen={()=>navigate(`/title/${item.id}`)}/>)}</div><div className="catalog-sentinel" ref={sentinel}>{catalog.loading&&<><i/>Chargement de la suite…</>}{catalog.error&&<button className="secondary" onClick={()=>catalog.loadMore()}>Réessayer le chargement</button>}{!catalog.hasMore&&catalog.items.length>0&&<span>Fin du catalogue</span>}</div></>;
+}
+
+function LibraryPage() {
+  const navigate=useNavigate();const library=useLibrary();const[matchingId,setMatchingId]=useState<string|null>(null);const[scanning,setScanning]=useState(false);
+  const unresolved=library.groups.filter(group=>!group.metadata);const matching=library.groups.find(group=>group.id===matchingId);
+  const scan=async()=>{setScanning(true);try{await fetch('/api/library/scan',{method:'POST'});await library.refresh()}finally{setScanning(false)}};
+  return <><div className="library-heading"><div className="welcome"><h1>Ma médiathèque</h1><p>{library.items.length} titre{library.items.length>1?'s':''} indexé{library.items.length>1?'s':''} · {unresolved.length} à identifier</p></div><div><button className="secondary" onClick={()=>void scan()} disabled={scanning}><RefreshCw className={scanning?'spin':''}/>{scanning?'Analyse…':'Analyser'}</button>{unresolved.length>0&&<button className="primary" onClick={()=>setMatchingId(unresolved[0].id)}><Search/>Identifier les médias</button>}</div></div>
+    {library.loading&&<div className="library-loading"><i/>Lecture de la bibliothèque…</div>}
+    {library.error&&<div className="library-empty"><FolderOpen/><h2>Bibliothèque indisponible</h2><p>{library.error}</p><button className="secondary" onClick={()=>void library.refresh()}>Réessayer</button></div>}
+    {!library.loading&&!library.error&&!library.items.length&&<div className="library-empty"><FolderOpen/><h2>Aucun média indexé</h2><p>Connectez un disque ou configurez un partage réseau, puis lancez une analyse.</p><button className="primary" onClick={()=>void scan()}><RefreshCw/>Analyser maintenant</button></div>}
+    {library.items.length>0&&<div className="grid library-grid">{library.items.map((item,index)=><div className="library-item" key={item.id}><MediaCard item={item} active={index===0} onOpen={()=>navigate(`/title/${item.id}`)}/><div className="library-badges"><span>{item.versionCount} version{item.versionCount!==1?'s':''}</span>{item.episodeCount? <span>{item.episodeCount} épisodes</span>:null}{!item.matched&&<button onClick={()=>setMatchingId(item.id)}>À identifier</button>}</div></div>)}</div>}
+    {matching&&<MetadataMatcher group={matching} onClose={()=>setMatchingId(null)} onMatched={library.refresh}/>}</>;
 }
 
 function SearchPage() {
@@ -90,22 +115,29 @@ function TonightPage() {
 function FilterGroup({title,children}:{title:string;children:React.ReactNode}){return <div className="filter-group"><strong>{title}</strong><div>{children}</div></div>}
 
 function DetailPage() {
-  const { id } = useParams(); const navigate = useNavigate(); const item = media.find(m=>m.id===id) ?? media[0];
-  return <div className="detail" style={{ '--a': item.palette[0], '--b': item.palette[1] } as React.CSSProperties}>
+  const { id } = useParams(); const navigate = useNavigate(); const item = resolveMedia(id);
+  return <div className="detail" style={{ '--a': item.palette[0], '--b': item.palette[1], backgroundImage:`linear-gradient(90deg,rgba(1,7,14,.94) 8%,rgba(1,7,14,.28)), url('${item.art??'/assets/sceneroot-landscape.png'}')` } as React.CSSProperties}>
     <button className="back focusable" onClick={()=>navigate(-1)}><ArrowLeft/> Retour</button>
     <div className="detail__symbol">{item.symbol}<i/></div><div className="detail__content"><span className="eyebrow">{item.kind === 'film' ? 'FILM' : 'SÉRIE'} · {item.year}</span><h1>{item.title}</h1>
-    <div className="detail__meta"><Star fill="currentColor"/> {item.rating}/10 <span>{item.duration}</span><span>{item.quality}</span></div><p>{item.description}</p><div className="detail__genres">{item.genres.map(g=><span key={g}>{g}</span>)}</div>
+    <div className="detail__meta"><Star fill="currentColor"/> {item.rating>0?`${item.rating}/10`:'Non noté'} <span>{item.duration}</span><span>{item.quality}</span></div><p>{item.description}</p><div className="detail__genres">{item.genres.map(g=><span key={g}>{g}</span>)}</div>{item.sourceUrl&&<a className="source-link" href={item.sourceUrl} target="_blank" rel="noreferrer">Données : {item.source==='tvmaze'?'TVmaze':item.source==='wikipedia'?'Wikipédia':'TMDB'}</a>}
     <div className="actions"><button className="primary focusable" onClick={()=>navigate(`/player/${item.id}`)}><Play fill="currentColor"/> {item.progress ? 'Reprendre' : 'Lire'}</button><button className="secondary focusable"><Download/> Télécharger</button><button className="icon-btn focusable"><Heart/></button></div></div>
   </div>;
 }
 
 function PlayerPage() {
-  const { id } = useParams(); const navigate=useNavigate(); const item=media.find(m=>m.id===id)??media[0]; const [playing,setPlaying]=useState(true); const [panel,setPanel]=useState<'sub'|'audio'|null>('sub');
-  return <div className="player" style={{ '--a': item.palette[0], '--b': item.palette[1] } as React.CSSProperties}>
+  const { id } = useParams(); const navigate=useNavigate(); const item=resolveMedia(id); const [playing,setPlaying]=useState(true); const [panel,setPanel]=useState<'sub'|'audio'|null>('sub');
+  return <div className="player" style={{ '--a': item.palette[0], '--b': item.palette[1], backgroundImage:`linear-gradient(105deg,rgba(1,7,14,.5),transparent 60%), url('${item.art??'/assets/sceneroot-landscape.png'}')` } as React.CSSProperties}>
     <div className="player__scene"><span>{item.symbol}</span><i/></div><div className="player__top"><Brand compact/><div><h1>{item.title}</h1><p>{item.kind === 'film'?'Film':'Série'} · {item.year} · {item.duration} · {item.quality}</p></div></div>
     {panel && <div className="track-panel"><h3>{panel==='sub'?<Subtitles/>:<Volume2/>}{panel==='sub'?'Sous-titres':'Piste audio'}</h3>{['Désactivés','Français','Anglais','Charger un fichier…'].map((x,i)=><button className={i===1?'active':''} key={x}>{x}{i===1&&<Check/>}</button>)}</div>}
-    <div className="player__controls"><div className="timeline"><span>0:28:17</span><i><b/></i><span>-1:13:43</span></div><div className="controls-row"><button onClick={()=>navigate(-1)}><ArrowLeft/>Retour</button><button className="round" onClick={()=>setPlaying(!playing)}>{playing?<Pause fill="currentColor"/>:<Play fill="currentColor"/>}</button><div className="controls-spacer"/><button className={panel==='sub'?'selected':''} onClick={()=>setPanel(panel==='sub'?null:'sub')}><Subtitles/>Sous-titres</button><button className={panel==='audio'?'selected':''} onClick={()=>setPanel(panel==='audio'?null:'audio')}><Volume2/>Audio</button><button><Gauge/>Qualité</button></div></div>
+    <div className="player__controls"><div className="timeline"><span>0:28:17</span><i><b/></i><span>-1:13:43</span></div><div className="controls-row"><button onClick={()=>navigate(-1)}><ArrowLeft/>Retour</button><button className="round" onClick={()=>setPlaying(!playing)}>{playing?<Pause fill="currentColor"/>:<Play fill="currentColor"/>}</button><div className="controls-spacer"/><button onClick={()=>navigate(`/rate/${item.id}`)}><Check/>Terminer</button><button className={panel==='sub'?'selected':''} onClick={()=>setPanel(panel==='sub'?null:'sub')}><Subtitles/>Sous-titres</button><button className={panel==='audio'?'selected':''} onClick={()=>setPanel(panel==='audio'?null:'audio')}><Volume2/>Audio</button><button><Gauge/>Qualité</button></div></div>
   </div>;
+}
+
+function RatingPage({profile}:{profile:Profile}) {
+  const {id}=useParams();const navigate=useNavigate();const item=resolveMedia(id);const [score,setScore]=useState(4);const [tags,setTags]=useState<string[]>([]);const [saving,setSaving]=useState(false);
+  const toggle=(tag:string)=>setTags(current=>current.includes(tag)?current.filter(x=>x!==tag):[...current,tag]);
+  const save=async()=>{setSaving(true);try{await fetch('/api/ratings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({profileId:profile.id,mediaId:item.id,score:score*2,tags})})}finally{navigate('/roots')}};
+  return <div className="rating-page" style={{backgroundImage:`linear-gradient(90deg,rgba(2,8,17,.72),rgba(2,8,17,.58)),url('${item.art??'/assets/sceneroot-landscape.png'}')`}}><Brand compact/><div className="rating-card"><span className="rating-icon"><Film/></span><h1>Vous avez terminé<br/>« {item.title} »</h1><p>Merci d’avoir regardé ! Que pensez-vous de ce {item.kind==='film'?'film':'programme'} ?</p><div className="stars">{[1,2,3,4,5].map(value=><button key={value} onClick={()=>setScore(value)} aria-label={`${value} étoile${value>1?'s':''}`}><Star fill={value<=score?'currentColor':'transparent'}/></button>)}</div><strong>{score} / 5 — {score===5?'Excellent':score===4?'Très bien':score===3?'Bien':score===2?'Moyen':'Décevant'}</strong><div className="rating-tags"><button className={tags.includes('À revoir')?'on':''} onClick={()=>toggle('À revoir')}><RotateCcw/>À revoir</button><button className={tags.includes('Émouvant')?'on':''} onClick={()=>toggle('Émouvant')}><Heart/>Émouvant</button><button className={tags.includes('Surprenant')?'on':''} onClick={()=>toggle('Surprenant')}><Sparkles/>Surprenant</button><button className={tags.includes('Trop long')?'on':''} onClick={()=>toggle('Trop long')}><Hourglass/>Trop long</button></div><div className="rating-actions"><button className="primary" onClick={save} disabled={saving}><Star fill="currentColor"/>{saving?'Enregistrement…':'Noter maintenant'}</button><button className="secondary" onClick={()=>navigate('/')}><Clock3/>Plus tard</button></div><small><Users/>Vos avis nous aident à proposer des recommandations plus personnalisées.</small></div></div>;
 }
 
 function RootsPage() { const navigate=useNavigate(); return <><div className="welcome"><h1>Mes <em>Roots</em></h1><p>Votre historique de visionnage personnel.</p></div><div className="stat-tabs"><button className="is-on"><Clock3/>Déjà vus</button><button><Film/>Films</button><button><Tv/>Séries</button><button><Heart/>Favoris notés</button></div><div className="grid">{media.slice(0,10).map((m,i)=><MediaCard item={{...m,progress:undefined}} active={i===0} key={m.id} onOpen={()=>navigate(`/title/${m.id}`)}/>)}</div></> }
@@ -118,7 +150,7 @@ function SettingsPage() {
     <div className="settings-card"><h2><Monitor/>Téléviseur & CEC</h2><Setting label="Contrôle HDMI-CEC" value={cec} setValue={setCec}/><Setting label="Démarrer en plein écran" value={true}/><Setting label="Adapter le taux de rafraîchissement" value={true}/></div>
     <div className="settings-card"><h2><Download/>Téléchargements</h2><p>Client local</p><div className="path"><Wifi/> Transmission RPC <Check/></div><label>Limite de stockage<input type="range" defaultValue="70"/></label><small>Les torrents doivent provenir de contenus que vous êtes autorisé à télécharger.</small></div>
     <div className="settings-card storage"><h2><BarChart3/>Stockage</h2><div className="storage-number"><b>3,2 To</b> / 4 To utilisés</div><div className="storage-bar"><i/><i/><i/><i/></div><div className="storage-key"><span>Films 1,8 To</span><span>Séries 950 Go</span><span>Téléchargements 210 Go</span><span>Cache 42 Go</span></div><p><strong>127 Go</strong> peuvent potentiellement être récupérés.</p></div>
-    <div className="settings-card"><h2><ShieldCheck/>Système</h2><Setting label="Mises à jour automatiques" value={updates} setValue={setUpdates}/><Setting label="Métadonnées TMDB" value={true}/><div className="version">SceneRoot v0.1.0 <span>À jour</span></div></div>
+    <div className="settings-card"><h2><ShieldCheck/>Système</h2><Setting label="Mises à jour automatiques" value={updates} setValue={setUpdates}/><Setting label="Catalogue et cache local" value={true}/><p>TMDB si configuré · sinon Wikipédia + TVmaze</p><small>Ce produit utilise l’API TMDB mais n’est ni approuvé ni certifié par TMDB.</small><div className="version">SceneRoot v0.1.0 <span>À jour</span></div></div>
     <div className="settings-card sources"><h2><Wifi/>Sources de recherche</h2><div className="source-row"><span><b>Torznab / C411</b><small>Clé API stockée localement</small></span><i className="dot"/></div><button className="secondary"><Plus/>Ajouter une source Torznab</button><small>Utilisez uniquement des sources et contenus que vous êtes autorisé à récupérer.</small></div>
   </div></>;
 }
@@ -126,13 +158,16 @@ function Setting({label,value,setValue}:{label:string;value:boolean;setValue?:(v
 
 function App() {
   const [booting,setBooting]=useState(true);
+  const [savedProfiles,setSavedProfiles]=useState<Profile[]>([]);
   const [profile,setProfile]=useState<Profile|null>(()=>{try{return JSON.parse(localStorage.getItem('sceneroot-profile')||'null')}catch{return null}});
   useEffect(()=>{const timer=setTimeout(()=>setBooting(false),1450);return()=>clearTimeout(timer)},[]);
-  useEffect(()=>{ const handle=(e:KeyboardEvent)=>{ if(!['ArrowRight','ArrowLeft','ArrowUp','ArrowDown'].includes(e.key))return; const els=[...document.querySelectorAll<HTMLElement>('button:not([disabled]),a[href],input')].filter(x=>x.offsetParent!==null); const current=document.activeElement as HTMLElement; const r=current?.getBoundingClientRect(); if(!r){els[0]?.focus();return} const horizontal=e.key==='ArrowLeft'||e.key==='ArrowRight'; const sign=e.key==='ArrowLeft'||e.key==='ArrowUp'?-1:1; let best:HTMLElement|undefined,score=Infinity; for(const el of els){if(el===current)continue;const q=el.getBoundingClientRect();const dx=q.left+q.width/2-(r.left+r.width/2),dy=q.top+q.height/2-(r.top+r.height/2);const primary=horizontal?dx:dy;if(Math.sign(primary)!==sign)continue;const secondary=horizontal?dy:dx;const s=Math.abs(primary)+Math.abs(secondary)*2;if(s<score){score=s;best=el}} if(best){e.preventDefault();best.focus()}}; addEventListener('keydown',handle); return()=>removeEventListener('keydown',handle)},[]);
+  useEffect(()=>{fetch('/api/profiles').then(response=>response.ok?response.json():[]).then((items:Profile[])=>setSavedProfiles(items)).catch(()=>{})},[]);
+  useEffect(()=>{ const handle=(e:KeyboardEvent)=>{ if(!['ArrowRight','ArrowLeft','ArrowUp','ArrowDown'].includes(e.key))return; const els=[...document.querySelectorAll<HTMLElement>('button:not([disabled]),a[href],input,select')].filter(x=>x.offsetParent!==null); const current=document.activeElement as HTMLElement; const r=current?.getBoundingClientRect(); if(!r){els[0]?.focus();return} const horizontal=e.key==='ArrowLeft'||e.key==='ArrowRight'; const sign=e.key==='ArrowLeft'||e.key==='ArrowUp'?-1:1; let best:HTMLElement|undefined,score=Infinity; for(const el of els){if(el===current)continue;const q=el.getBoundingClientRect();const dx=q.left+q.width/2-(r.left+r.width/2),dy=q.top+q.height/2-(r.top+r.height/2);const primary=horizontal?dx:dy;if(Math.sign(primary)!==sign)continue;const secondary=horizontal?dy:dx;const s=Math.abs(primary)+Math.abs(secondary)*2;if(s<score){score=s;best=el}} if(best){e.preventDefault();best.focus()}}; addEventListener('keydown',handle); return()=>removeEventListener('keydown',handle)},[]);
   if(booting)return <BootScreen/>;
-  if(!profile)return <ProfileGate onSelect={p=>{localStorage.setItem('sceneroot-profile',JSON.stringify(p));setProfile(p)}}/>;
-  return <Routes><Route path="/player/:id" element={<PlayerPage/>}/><Route path="/title/:id" element={<Shell profile={profile}><DetailPage/></Shell>}/><Route path="*" element={<Shell profile={profile}><Routes>
-    <Route path="/" element={<HomePage profile={profile}/>}/><Route path="/films" element={<BrowsePage kind="film" title="Films"/>}/><Route path="/series" element={<BrowsePage kind="serie" title="Séries"/>}/><Route path="/discover" element={<BrowsePage title="Découvrir"/>}/><Route path="/tonight" element={<TonightPage/>}/><Route path="/library" element={<BrowsePage title="Ma médiathèque"/>}/><Route path="/roots" element={<RootsPage/>}/><Route path="/search" element={<SearchPage/>}/><Route path="/settings" element={<SettingsPage/>}/>
+  if(!profile)return <ProfileGate availableProfiles={[...profiles,...savedProfiles.filter(saved=>!profiles.some(profile=>profile.id===saved.id))]} onCreated={created=>setSavedProfiles(current=>[...current,created])} onSelect={p=>{localStorage.setItem('sceneroot-profile',JSON.stringify(p));setProfile(p)}}/>;
+  const switchProfile=()=>{localStorage.removeItem('sceneroot-profile');setProfile(null)};
+  return <Routes><Route path="/player/:id" element={<PlayerPage/>}/><Route path="/rate/:id" element={<RatingPage profile={profile}/>}/><Route path="/title/:id" element={<Shell profile={profile} onSwitchProfile={switchProfile}><DetailPage/></Shell>}/><Route path="*" element={<Shell profile={profile} onSwitchProfile={switchProfile}><Routes>
+    <Route path="/" element={<HomePage profile={profile}/>}/><Route path="/films" element={<BrowsePage kind="film" title="Films"/>}/><Route path="/series" element={<BrowsePage kind="serie" title="Séries"/>}/><Route path="/discover" element={<BrowsePage title="Découvrir"/>}/><Route path="/tonight" element={<TonightPage/>}/><Route path="/library" element={<LibraryPage/>}/><Route path="/roots" element={<RootsPage/>}/><Route path="/search" element={<SearchPage/>}/><Route path="/settings" element={<SettingsPage/>}/>
   </Routes></Shell>}/></Routes>;
 }
 export default App;
