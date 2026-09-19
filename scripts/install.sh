@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SceneRoot — installateur Raspberry Pi
@@ -18,6 +18,7 @@ if [[ -t 1 ]]; then
 else
   C_RESET=; C_CYAN=; C_DIM=; C_GREEN=; C_YELLOW=; C_RED=; C_BOLD=
 fi
+trap 'printf "\n  %s✗ Installation interrompue (ligne %s, code %s).%s\n" "$C_RED" "$LINENO" "$?" "$C_RESET" >&2' ERR
 
 banner() {
   printf '%s' "$C_CYAN"
@@ -72,7 +73,7 @@ if [[ "$USE_TUI" == 1 ]]; then
   CFG_MEDIA=$(whiptail --title "SceneRoot" --inputbox "Dossier(s) média à indexer (séparés par des virgules) :" 10 70 "$CFG_MEDIA" 3>&1 1>&2 2>&3) || die "Installation annulée."
   CFG_TMDB=$(whiptail --title "SceneRoot" --inputbox "Clé API TMDB (facultatif — laissez vide pour Wikipédia + TVmaze) :" 10 70 "$CFG_TMDB" 3>&1 1>&2 2>&3) || CFG_TMDB="$CFG_TMDB"
   if whiptail --title "SceneRoot" --yesno "Autoriser la configuration à distance depuis un mobile ?\n(génère un jeton d'administration)" 10 70; then
-    [[ -z "$CFG_TOKEN" ]] && CFG_TOKEN="$(head -c 18 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 24)"
+    [[ -z "$CFG_TOKEN" ]] && CFG_TOKEN="$(head -c 18 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 24)" || true
   fi
   if whiptail --title "SceneRoot" --yesno "Lancer SceneRoot directement sur la TV sans bureau Ubuntu ?\n\nOui : kiosque léger Cage/Wayland (recommandé)\nNon : démarrage dans la session graphique existante" 13 74; then
     CFG_KIOSK_MODE=direct
@@ -140,6 +141,7 @@ sudo chown -R "$USER":"$USER" /var/lib/sceneroot
   echo "SCENEROOT_TV_SCALE=$CFG_TV_SCALE"
   [[ -n "$CFG_TMDB" ]]  && echo "TMDB_API_KEY=$CFG_TMDB"
   [[ -n "$CFG_TOKEN" ]] && echo "SCENEROOT_ADMIN_TOKEN=$CFG_TOKEN"
+  true  # garantit un code de sortie 0 du bloc (sinon set -e+pipefail tue le script)
 } | sudo tee "$ENV_FILE" >/dev/null
 sudo chmod 600 "$ENV_FILE"
 ok "Configuration enregistrée"
@@ -192,7 +194,7 @@ echo
 echo "  ${C_BOLD}Interface TV${C_RESET}    : http://127.0.0.1:4174  (kiosque au prochain redémarrage)"
 echo "  ${C_BOLD}Depuis le réseau${C_RESET}: http://${IP}:4174"
 echo "  ${C_BOLD}Réglages mobile${C_RESET} : http://${IP}:4174/admin.html"
-[[ -n "$CFG_TOKEN" ]] && echo "  ${C_BOLD}Jeton admin${C_RESET}     : ${C_YELLOW}${CFG_TOKEN}${C_RESET}  ${C_DIM}(à saisir sur le mobile)${C_RESET}"
+[[ -n "$CFG_TOKEN" ]] && echo "  ${C_BOLD}Jeton admin${C_RESET}     : ${C_YELLOW}${CFG_TOKEN}${C_RESET}  ${C_DIM}(à saisir sur le mobile)${C_RESET}" || true
 echo
 echo "  ${C_DIM}Au premier lancement, l'assistant vous aidera à créer les profils.${C_RESET}"
 echo
