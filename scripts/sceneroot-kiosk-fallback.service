@@ -1,0 +1,6 @@
+[Unit]
+Description=SceneRoot kiosk recovery
+
+[Service]
+Type=oneshot
+ExecStart=/opt/sceneroot/scripts/kiosk-fallback.sh

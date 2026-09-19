@@ -66,6 +66,7 @@ CFG_MEDIA="${SCENEROOT_MEDIA:-/mnt/media}"
 CFG_TMDB="${TMDB_API_KEY:-}"
 CFG_TOKEN="${SCENEROOT_ADMIN_TOKEN:-}"
 CFG_KIOSK_MODE="${SCENEROOT_KIOSK_MODE:-direct}"
+CFG_TV_SCALE="${SCENEROOT_TV_SCALE:-auto}"
 
 if [[ "$USE_TUI" == 1 ]]; then
   CFG_MEDIA=$(whiptail --title "SceneRoot" --inputbox "Dossier(s) média à indexer (séparés par des virgules) :" 10 70 "$CFG_MEDIA" 3>&1 1>&2 2>&3) || die "Installation annulée."
@@ -90,7 +91,7 @@ ok "Médias : $CFG_MEDIA"
 step "Installation des paquets système"
 run "Mise à jour des dépôts" sudo apt-get update -qq
 run "Composants système, vidéo, CEC et kiosque Wayland" \
-  sudo apt-get install -y -qq git curl cec-utils ffmpeg mpv socat transmission-daemon cage seatd python3-evdev
+  sudo apt-get install -y -qq git curl cec-utils ffmpeg mpv socat transmission-daemon cage seatd dbus-user-session python3-evdev
 if ! have chromium && ! have chromium-browser; then
   if apt-cache show chromium >/dev/null 2>&1; then
     run "Chromium" sudo apt-get install -y -qq chromium
@@ -126,7 +127,7 @@ cd "$APP_DIR"
 step "Dépendances et compilation"
 run "npm ci" npm ci --no-audit --no-fund
 run "npm run build" npm run build
-chmod +x scripts/update.sh scripts/kiosk.sh scripts/cec-input.py
+chmod +x scripts/update.sh scripts/kiosk.sh scripts/kiosk-fallback.sh scripts/cec-input.py
 
 # ── Étape 6 : configuration persistante ──────────────────────────────────────
 step "Écriture de la configuration ($ENV_FILE)"
@@ -136,6 +137,7 @@ sudo chown -R "$USER":"$USER" /var/lib/sceneroot
   echo "# Généré par install.sh — $(date -Iseconds)"
   echo "SCENEROOT_MEDIA=$CFG_MEDIA"
   echo "SCENEROOT_KIOSK_MODE=$CFG_KIOSK_MODE"
+  echo "SCENEROOT_TV_SCALE=$CFG_TV_SCALE"
   [[ -n "$CFG_TMDB" ]]  && echo "TMDB_API_KEY=$CFG_TMDB"
   [[ -n "$CFG_TOKEN" ]] && echo "SCENEROOT_ADMIN_TOKEN=$CFG_TOKEN"
 } | sudo tee "$ENV_FILE" >/dev/null
@@ -148,6 +150,7 @@ sed "s/@SCENEROOT_USER@/$USER/g" scripts/sceneroot.service | sudo tee /etc/syste
 sed "s/@SCENEROOT_USER@/$USER/g" scripts/sceneroot-update.service | sudo tee /etc/systemd/system/sceneroot-update.service >/dev/null
 sed "s/@SCENEROOT_USER@/$USER/g" scripts/sceneroot-kiosk.service | sudo tee /etc/systemd/system/sceneroot-kiosk.service >/dev/null
 sudo cp scripts/sceneroot-cec.service /etc/systemd/system/sceneroot-cec.service
+sudo cp scripts/sceneroot-kiosk-fallback.service /etc/systemd/system/sceneroot-kiosk-fallback.service
 sudo cp scripts/sceneroot-update.timer /etc/systemd/system/sceneroot-update.timer
 echo uinput | sudo tee /etc/modules-load.d/sceneroot-uinput.conf >/dev/null
 sudo modprobe uinput || warn "Le module uinput sera chargé au prochain démarrage."

@@ -105,7 +105,7 @@ log "Installation de la nouvelle version"
 as_app git merge --ff-only "$UPDATE_REF"
 as_app npm ci --no-audit --no-fund
 as_app npm run build
-chmod +x scripts/update.sh scripts/kiosk.sh scripts/cec-input.py
+chmod +x scripts/update.sh scripts/kiosk.sh scripts/kiosk-fallback.sh scripts/cec-input.py
 
 # Les unités sont réinstallées pour appliquer aussi les évolutions du service
 # et du minuteur sans devoir relancer l’installateur complet.
@@ -113,6 +113,7 @@ sed "s/@SCENEROOT_USER@/$APP_USER/g" scripts/sceneroot.service > /etc/systemd/sy
 sed "s/@SCENEROOT_USER@/$APP_USER/g" scripts/sceneroot-update.service > /etc/systemd/system/sceneroot-update.service
 sed "s/@SCENEROOT_USER@/$APP_USER/g" scripts/sceneroot-kiosk.service > /etc/systemd/system/sceneroot-kiosk.service
 install -m 0644 scripts/sceneroot-cec.service /etc/systemd/system/sceneroot-cec.service
+install -m 0644 scripts/sceneroot-kiosk-fallback.service /etc/systemd/system/sceneroot-kiosk-fallback.service
 install -m 0644 scripts/sceneroot-update.timer /etc/systemd/system/sceneroot-update.timer
 echo uinput > /etc/modules-load.d/sceneroot-uinput.conf
 modprobe uinput || true
@@ -123,6 +124,10 @@ if [[ "$KIOSK_MODE" == "direct" ]]; then
   systemctl disable display-manager.service >/dev/null 2>&1 || true
   systemctl set-default multi-user.target >/dev/null
   systemctl enable sceneroot-kiosk.service
+  if [[ "$RECONFIGURE" == 1 ]]; then
+    systemctl reset-failed sceneroot-kiosk.service >/dev/null 2>&1 || true
+    systemctl restart sceneroot-kiosk.service || systemctl start sceneroot-kiosk-fallback.service || true
+  fi
 else
   systemctl disable sceneroot-kiosk.service >/dev/null 2>&1 || true
 fi

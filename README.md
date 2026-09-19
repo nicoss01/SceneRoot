@@ -31,6 +31,8 @@ Le serveur, le pont HDMI-CEC et l’interface TV se lancent au démarrage via `s
 
 Pour conserver une session de bureau classique, lancez l’installation avec `SCENEROOT_KIOSK_MODE=desktop`. Le choix est mémorisé dans `/etc/sceneroot.env` et conservé par les mises à jour.
 
+Le kiosque détecte automatiquement une sortie 1080p, 1440p ou 4K et applique un facteur d’échelle lisible. Cette détection peut être remplacée dans `/etc/sceneroot.env` avec `SCENEROOT_TV_SCALE=1`, `1.5` ou `2`, puis appliquée avec `sudo systemctl restart sceneroot-kiosk.service`.
+
 Pour déclencher immédiatement la même mise à jour depuis le terminal :
 
 ```bash
@@ -45,6 +47,16 @@ Après la mise à jour depuis une ancienne installation qui ne connaissait pas e
 sudo /opt/sceneroot/scripts/update.sh --reconfigure
 sudo reboot
 ```
+
+Si une ancienne version reste sur les messages de démarrage avant que cette correction puisse être installée, connectez-vous en SSH et restaurez temporairement le bureau avec :
+
+```bash
+sudo systemctl disable --now sceneroot-kiosk.service
+sudo systemctl set-default graphical.target
+sudo systemctl start display-manager.service
+```
+
+La nouvelle unité possède un secours automatique : si Cage ne peut pas ouvrir la sortie HDMI, SceneRoot relance le gestionnaire d’affichage existant ou, sur un système sans bureau, affiche une invite de connexion sur `tty1` au lieu de laisser un écran bloqué.
 
 Le script installé utilise automatiquement :
 
