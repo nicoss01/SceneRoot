@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Route, Routes, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, BarChart3, Check, ChevronRight, Clock3, Download, Film, FolderOpen, HardDrive, Heart, Hourglass, Lock, Monitor, Pause, Pencil, Play, Plus, RefreshCw, RotateCcw, Search, ShieldCheck, Sparkles, Star, Subtitles, Timer, Tv, Users, Volume2, Wifi, WandSparkles, X } from 'lucide-react';
+import { ArrowLeft, BarChart3, Check, ChevronRight, Clock3, Download, Film, FolderOpen, HardDrive, Heart, Hourglass, Lock, Monitor, Pause, Pencil, Play, Plus, RefreshCw, RotateCcw, Search, ShieldCheck, Sparkles, Star, Subtitles, Timer, Trash2, Tv, Users, Volume2, Wifi, WandSparkles, X } from 'lucide-react';
 import { Brand } from './components/Brand';
 import { MediaCard } from './components/MediaCard';
 import { MetadataMatcher } from './components/MetadataMatcher';
@@ -15,6 +15,7 @@ import { useLibrary } from './hooks/useLibrary';
 import { useHistory, useResume } from './hooks/usePlaybackHistory';
 import { useLibraryGroup } from './hooks/useLibraryGroup';
 import { DownloadPanel } from './components/DownloadPanel';
+import { useDownloads } from './hooks/useDownloads';
 import type { MediaItem, PlayerStatus, Profile } from './types';
 
 function formatTime(seconds: number) {
@@ -228,6 +229,19 @@ function RootsPage({profile}:{profile:Profile}) {
     {!history.loading&&!filtered.length&&<div className="library-empty"><Clock3/><h2>Rien pour le moment</h2><p>Vos films et séries terminés ou notés apparaîtront ici.</p></div>}
     {filtered.length>0&&<div className="grid">{filtered.map((m,i)=><MediaCard item={m} active={i===0} key={m.id} onOpen={()=>navigate(`/title/${m.id}`)}/>)}</div>}</> }
 
+const torrentStatus:Record<number,string>={0:'En pause',1:'Vérif. en attente',2:'Vérification',3:'En file',4:'Téléchargement',5:'Envoi en file',6:'Partage'};
+function DownloadsPage() {
+  const {torrents,error,loading,control}=useDownloads();
+  return <><div className="welcome"><h1>Téléchargements</h1><p>File Transmission en direct.</p></div>
+    {loading&&!torrents.length&&<div className="library-loading"><i/>Connexion à Transmission…</div>}
+    {error&&<div className="library-empty"><Download/><h2>Transmission indisponible</h2><p>{error}</p></div>}
+    {!error&&!loading&&!torrents.length&&<div className="library-empty"><Download/><h2>Aucun téléchargement</h2><p>Lancez un téléchargement depuis une fiche pour le suivre ici.</p></div>}
+    {torrents.length>0&&<div className="download-list">{torrents.map(torrent=>{const pct=Math.round(torrent.percentDone*100);const active=torrent.status!==0;return <div className="download-row" key={torrent.id}>
+      <div className="download-info"><strong>{torrent.name}</strong><div className="download-badges"><span>{torrentStatus[torrent.status]??'—'}</span><span>{pct}%</span><span>{formatBytes(torrent.sizeWhenDone||torrent.totalSize)}</span>{torrent.rateDownload>0&&<span>↓ {formatBytes(torrent.rateDownload)}/s</span>}{torrent.peersConnected>0&&<span>{torrent.peersConnected} pairs</span>}{torrent.errorString&&<span className="src">{torrent.errorString}</span>}</div><span className="progress"><i style={{width:`${pct}%`}}/></span></div>
+      <div className="download-actions">{active?<button className="icon-btn" title="Mettre en pause" onClick={()=>void control(torrent.id,'stop')}><Pause/></button>:<button className="icon-btn" title="Reprendre" onClick={()=>void control(torrent.id,'start')}><Play fill="currentColor"/></button>}<button className="icon-btn" title="Annuler" onClick={()=>{if(window.confirm('Retirer ce téléchargement ? Les données déjà téléchargées sont conservées.'))void control(torrent.id,'remove',false)}}><Trash2/></button></div>
+    </div>})}</div>}
+  </>;
+}
 type StorageRoot={root:string;total:number;free:number;available:number;libraryBytes:number};
 function formatBytes(bytes:number){if(!bytes)return '0 o';const units=['o','Ko','Mo','Go','To'];const i=Math.min(units.length-1,Math.floor(Math.log(bytes)/Math.log(1024)));return `${(bytes/1024**i).toFixed(i>=3?1:0)} ${units[i]}`}
 function SettingsPage() {
@@ -261,7 +275,7 @@ function App() {
   if(!profile)return <ProfileGate availableProfiles={availableProfiles} onSaved={upsertProfile} onSelect={p=>{localStorage.setItem('sceneroot-profile',JSON.stringify(p));setProfile(p)}}/>;
   const switchProfile=()=>{localStorage.removeItem('sceneroot-profile');setProfile(null)};
   return <Routes><Route path="/player/:id" element={<PlayerPage profile={profile}/>}/><Route path="/rate/:id" element={<RatingPage profile={profile}/>}/><Route path="/title/:id" element={<Shell profile={profile} onSwitchProfile={switchProfile}><DetailPage profile={profile}/></Shell>}/><Route path="*" element={<Shell profile={profile} onSwitchProfile={switchProfile}><Routes>
-    <Route path="/" element={<HomePage profile={profile}/>}/><Route path="/films" element={<BrowsePage kind="film" title="Films"/>}/><Route path="/series" element={<BrowsePage kind="serie" title="Séries"/>}/><Route path="/discover" element={<BrowsePage title="Découvrir"/>}/><Route path="/tonight" element={<TonightPage availableProfiles={availableProfiles}/>}/><Route path="/library" element={<LibraryPage/>}/><Route path="/roots" element={<RootsPage profile={profile}/>}/><Route path="/search" element={<SearchPage/>}/><Route path="/settings" element={<SettingsPage/>}/>
+    <Route path="/" element={<HomePage profile={profile}/>}/><Route path="/films" element={<BrowsePage kind="film" title="Films"/>}/><Route path="/series" element={<BrowsePage kind="serie" title="Séries"/>}/><Route path="/discover" element={<BrowsePage title="Découvrir"/>}/><Route path="/tonight" element={<TonightPage availableProfiles={availableProfiles}/>}/><Route path="/library" element={<LibraryPage/>}/><Route path="/downloads" element={<DownloadsPage/>}/><Route path="/roots" element={<RootsPage profile={profile}/>}/><Route path="/search" element={<SearchPage/>}/><Route path="/settings" element={<SettingsPage/>}/>
   </Routes></Shell>}/></Routes>;
 }
 export default App;

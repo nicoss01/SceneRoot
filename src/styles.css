@@ -323,6 +323,7 @@ section { margin: 0 0 13px; }
 .download-badges .score { background: #0e2f3a; color: var(--cyan); }
 .download-badges .src { background: #2a1a3a; color: #d8b4fe; }
 .download-row button { flex: 0 0 auto; }
+.download-actions { display: flex; gap: 8px; flex: 0 0 auto; }
 
 /* Post-play rating */
 .rating-page { min-height: 100vh; position: relative; display: grid; place-items: center; overflow: hidden; background-position: center; background-size: cover; }
