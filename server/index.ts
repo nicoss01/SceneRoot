@@ -14,7 +14,7 @@ import { rankDownloads, type RankCandidate, type RankPrefs } from './lib/rank.js
 import { isAllowedOrigin, parseAllowedOrigins } from './lib/cors.js';
 import { atomicWriteJson } from './lib/jsonStore.js';
 import { createStore, type StoredDb } from './lib/store.js';
-import { bearerToken, isAdminAuthorized, requiresAdmin } from './lib/auth.js';
+import { bearerToken, isAdminAuthorized, isLoopback, isPrivateAddress, requiresAdmin } from './lib/auth.js';
 import { maskSource, sanitizeSource, type TorznabSource } from './lib/sources.js';
 import { computeStats } from './lib/stats.js';
 
@@ -22,7 +22,7 @@ type Rating = { profileId: string; mediaId: string; score: number; tags: string[
 type ProfileRecord = { id:string; name:string; ageLimit:number; avatar:string; accent:string; pinHash?:string; createdAt:string };
 type MediaMetadata = { provider:'tmdb'|'tvmaze'|'wikipedia'; providerId:number|string; title:string; originalTitle?:string; overview?:string; poster?:string; backdrop?:string; genres?:string[]; releaseDate?:string; ageRating?:string; runtime?:number; sourceUrl?:string; informationSource?:string };
 type PlaybackEntry = { position:number; duration:number; updatedAt:string };
-type Settings = { minFreeGb?:number; preferredQuality?:string; preferredLanguages?:string[]; preferHdr?:boolean; torznabSources?:TorznabSource[]; setupComplete?:boolean };
+type Settings = { minFreeGb?:number; preferredQuality?:string; preferredLanguages?:string[]; preferHdr?:boolean; torznabSources?:TorznabSource[]; setupComplete?:boolean; adminToken?:string };
 type GuestSession = { id:string; ageLimit:number; createdAt:string; expiresAt:number|null; ephemeral:boolean };
 type MediaPref = { profileId:string; mediaId:string; at:string };
 type Db = { profiles: ProfileRecord[]; library: LibraryItem[]; ratings: Rating[]; playback: Record<string, PlaybackEntry|number>; settings: Settings; guests: GuestSession[]; favorites: MediaPref[]; hidden: MediaPref[] };
@@ -149,11 +149,15 @@ async function scanLibrary() {
 
 const allowedOrigins=parseAllowedOrigins(process.env.SCENEROOT_ALLOWED_ORIGINS);
 await app.register(cors, { origin:(origin,callback)=>callback(null,isAllowedOrigin(origin,allowedOrigins)) });
+const trustPrivateLan=process.env.SCENEROOT_REQUIRE_TOKEN!=='1';
+function adminToken(){return process.env.SCENEROOT_ADMIN_TOKEN??loadDb().settings.adminToken}
 app.addHook('onRequest',async(request,reply)=>{
   if(!requiresAdmin(request.method,request.url))return;
   const token=(request.headers['x-sceneroot-token'] as string|undefined)??bearerToken(request.headers.authorization);
-  if(!isAdminAuthorized(request.ip,token,process.env.SCENEROOT_ADMIN_TOKEN))return reply.code(401).send({error:'Administration réservée : accès distant refusé (token requis)'});
+  if(!isAdminAuthorized(request.ip,token,adminToken(),trustPrivateLan))return reply.code(401).send({error:'Administration réservée : accès distant refusé (token requis)'});
 });
+app.get('/api/admin-token',async(request,reply)=>{if(!isPrivateAddress(request.ip)&&!isLoopback(request.ip))return reply.code(403).send({error:'Réservé au réseau local'});const envToken=process.env.SCENEROOT_ADMIN_TOKEN;const dbToken=loadDb().settings.adminToken;return{token:envToken??dbToken??null,source:envToken?'env':dbToken?'app':'none',requireToken:!trustPrivateLan}});
+app.post<{Body:{token?:string}}>('/api/admin-token',async(request,reply)=>{if(!isPrivateAddress(request.ip)&&!isLoopback(request.ip))return reply.code(403).send({error:'Réservé au réseau local'});if(process.env.SCENEROOT_ADMIN_TOKEN)return reply.code(409).send({error:'Jeton défini par l’environnement (SCENEROOT_ADMIN_TOKEN)'});const db=loadDb();const token=(request.body?.token?.trim())||randomBytes(18).toString('base64').replace(/[^A-Za-z0-9]/g,'').slice(0,24);db.settings.adminToken=token;saveDb(db);return{token}});
 function lanAddresses(){const out:string[]=[];for(const entries of Object.values(networkInterfaces()))for(const entry of entries??[])if(entry.family==='IPv4'&&!entry.internal)out.push(entry.address);return out}
 app.get('/api/health', async () => ({ ok:true, version:'0.1.0', mediaRoots, port, addresses:lanAddresses(), storage:store.backend }));
 app.get('/api/profiles',async()=>loadDb().profiles.map(({pinHash,...profile})=>({...profile,locked:Boolean(pinHash)})));

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bearerToken, isAdminAuthorized, isLoopback, requiresAdmin } from './auth.js';
+import { bearerToken, isAdminAuthorized, isLoopback, isPrivateAddress, requiresAdmin } from './auth.js';
 
 describe('isLoopback', () => {
   it('recognises loopback addresses', () => {
@@ -29,15 +29,34 @@ describe('isAdminAuthorized', () => {
     expect(isAdminAuthorized('127.0.0.1', undefined, undefined)).toBe(true);
     expect(isAdminAuthorized('::1', undefined, 'secret')).toBe(true);
   });
-  it('denies remote clients when no token is configured', () => {
-    expect(isAdminAuthorized('192.168.1.20', 'anything', undefined)).toBe(false);
+  it('trusts the private LAN by default', () => {
+    expect(isAdminAuthorized('192.168.1.20', undefined, undefined)).toBe(true);
+    expect(isAdminAuthorized('10.0.0.5', undefined, undefined)).toBe(true);
   });
-  it('allows remote clients with the correct token', () => {
-    expect(isAdminAuthorized('192.168.1.20', 'secret', 'secret')).toBe(true);
+  it('denies WAN clients when no token is configured', () => {
+    expect(isAdminAuthorized('8.8.8.8', 'anything', undefined)).toBe(false);
   });
-  it('denies remote clients with a wrong or missing token', () => {
-    expect(isAdminAuthorized('192.168.1.20', 'nope', 'secret')).toBe(false);
-    expect(isAdminAuthorized('192.168.1.20', undefined, 'secret')).toBe(false);
+  it('allows WAN clients with the correct token', () => {
+    expect(isAdminAuthorized('8.8.8.8', 'secret', 'secret')).toBe(true);
+  });
+  it('denies WAN clients with a wrong or missing token', () => {
+    expect(isAdminAuthorized('8.8.8.8', 'nope', 'secret')).toBe(false);
+    expect(isAdminAuthorized('8.8.8.8', undefined, 'secret')).toBe(false);
+  });
+  it('can require a token even on the LAN (strict mode)', () => {
+    expect(isAdminAuthorized('192.168.1.20', undefined, 'secret', false)).toBe(false);
+    expect(isAdminAuthorized('192.168.1.20', 'secret', 'secret', false)).toBe(true);
+  });
+});
+
+describe('isPrivateAddress', () => {
+  it('recognises RFC1918 and loopback', () => {
+    for (const ip of ['127.0.0.1', '192.168.0.1', '10.1.2.3', '172.16.0.1', '::ffff:192.168.1.5', 'fd00::1']) expect(isPrivateAddress(ip)).toBe(true);
+  });
+  it('rejects public addresses', () => {
+    expect(isPrivateAddress('8.8.8.8')).toBe(false);
+    expect(isPrivateAddress('172.32.0.1')).toBe(false);
+    expect(isPrivateAddress(undefined)).toBe(false);
   });
 });
 

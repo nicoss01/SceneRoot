@@ -102,6 +102,11 @@
   var TKEY='sceneroot-admin-token';
   var tokenInput=document.getElementById('token');
   try { tokenInput.value=localStorage.getItem(TKEY)||''; } catch(e){}
+  // Le QR affiché sur le téléviseur pré-remplit le jeton via #t=...
+  try {
+    var m=(location.hash||'').match(/[#&]t=([^&]+)/);
+    if(m){ var t=decodeURIComponent(m[1]); tokenInput.value=t; try{localStorage.setItem(TKEY,t);}catch(e){} history.replaceState(null,'',location.pathname+location.search); }
+  } catch(e){}
   tokenInput.addEventListener('change',function(){ try{localStorage.setItem(TKEY,tokenInput.value.trim());}catch(e){} });
 
   function headers(json){ var h={}; if(json) h['Content-Type']='application/json'; var t=tokenInput.value.trim(); if(t) h['X-SceneRoot-Token']=t; return h; }

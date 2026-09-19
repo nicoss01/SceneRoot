@@ -12,6 +12,18 @@ export function isLoopback(remoteAddress: string | undefined): boolean {
   return !!remoteAddress && LOOPBACK.has(remoteAddress);
 }
 
+const PRIVATE_V4 = [/^10\./, /^192\.168\./, /^172\.(1[6-9]|2\d|3[01])\./, /^169\.254\./];
+
+/** True for loopback and RFC1918 / link-local / IPv6 ULA addresses (a home LAN). */
+export function isPrivateAddress(remoteAddress: string | undefined): boolean {
+  if (!remoteAddress) return false;
+  const ip = remoteAddress.startsWith('::ffff:') ? remoteAddress.slice(7) : remoteAddress;
+  if (isLoopback(ip)) return true;
+  if (PRIVATE_V4.some(re => re.test(ip))) return true;
+  const low = ip.toLowerCase();
+  return low.startsWith('fc') || low.startsWith('fd') || low.startsWith('fe80');
+}
+
 /** Extracts a bearer token from an Authorization header, if present. */
 export function bearerToken(authorization: string | undefined): string | undefined {
   if (!authorization) return undefined;
@@ -25,8 +37,9 @@ export function bearerToken(authorization: string | undefined): string | undefin
  * Any remote client must present the configured admin token; if none is
  * configured, remote administration is denied outright.
  */
-export function isAdminAuthorized(remoteAddress: string | undefined, token: string | undefined, configuredToken: string | undefined): boolean {
+export function isAdminAuthorized(remoteAddress: string | undefined, token: string | undefined, configuredToken: string | undefined, trustPrivate = true): boolean {
   if (isLoopback(remoteAddress)) return true;
+  if (trustPrivate && isPrivateAddress(remoteAddress)) return true;
   if (!configuredToken || !token) return false;
   return safeEqual(token, configuredToken);
 }
