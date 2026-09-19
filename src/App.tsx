@@ -14,6 +14,7 @@ import { useCatalog } from './hooks/useCatalog';
 import { useLibrary } from './hooks/useLibrary';
 import { useHistory, useResume } from './hooks/usePlaybackHistory';
 import { useLibraryGroup } from './hooks/useLibraryGroup';
+import { DownloadPanel } from './components/DownloadPanel';
 import type { MediaItem, PlayerStatus, Profile } from './types';
 
 function formatTime(seconds: number) {
@@ -167,6 +168,7 @@ function FilterGroup({title,children}:{title:string;children:React.ReactNode}){r
 function DetailPage({profile}:{profile:Profile}) {
   const { id } = useParams(); const navigate = useNavigate(); const item = resolveMedia(id);
   const isLocalSeries=Boolean(item.local)&&item.kind==='serie';
+  const [downloading,setDownloading]=useState(false);
   const {seasons,detail}=useLibraryGroup(id,profile.id,isLocalSeries);
   const nextId=detail?.nextEpisodeId; const playTarget=nextId??item.id;
   const nextEpisode=seasons.flatMap(season=>season.episodes.map(episode=>({...episode,season:season.season}))).find(episode=>episode.id===nextId);
@@ -176,7 +178,8 @@ function DetailPage({profile}:{profile:Profile}) {
     <button className="back focusable" onClick={()=>navigate(-1)}><ArrowLeft/> Retour</button>
     <div className="detail__symbol">{item.symbol}<i/></div><div className="detail__content"><span className="eyebrow">{item.kind === 'film' ? 'FILM' : 'SÉRIE'} · {item.year}</span><h1>{item.title}</h1>
     <div className="detail__meta"><Star fill="currentColor"/> {item.rating>0?`${item.rating}/10`:'Non noté'} <span>{item.duration}</span><span>{item.quality}</span></div><p>{item.description}</p><div className="detail__genres">{item.genres.map(g=><span key={g}>{g}</span>)}</div>{item.sourceUrl&&<a className="source-link" href={item.sourceUrl} target="_blank" rel="noreferrer">Informations : {item.informationSource??(item.source==='tvmaze'?'TVmaze':item.source==='wikipedia'?'Wikipédia':'TMDB')}</a>}
-    <div className="actions"><button className="primary focusable" onClick={()=>navigate(`/player/${playTarget}`)}><Play fill="currentColor"/> {playLabel}</button><button className="secondary focusable"><Download/> Télécharger</button><button className="icon-btn focusable"><Heart/></button></div>
+    <div className="actions"><button className="primary focusable" onClick={()=>navigate(`/player/${playTarget}`)}><Play fill="currentColor"/> {playLabel}</button><button className="secondary focusable" onClick={()=>setDownloading(true)}><Download/> Télécharger</button><button className="icon-btn focusable"><Heart/></button></div>
+    {downloading&&<DownloadPanel item={item} onClose={()=>setDownloading(false)}/>}
     {isLocalSeries&&seasons.length>0&&<div className="episodes">{seasons.map(season=><div className="season" key={season.season}><h3>Saison {season.season} · {season.episodes.length} épisode{season.episodes.length>1?'s':''}</h3><div className="episode-list">{season.episodes.map(episode=><button className={`episode focusable ${episode.id===nextId?'is-next':''}`} key={episode.id} onClick={()=>navigate(`/player/${episode.id}`)}><span className="episode-num">E{String(episode.episode).padStart(2,'0')}</span><span className="episode-title">{episode.title}{episode.id===nextId&&<em> · à suivre</em>}</span><Play size={16} fill="currentColor"/>{episode.progress>0.02&&<i className="episode-progress" style={{width:`${Math.min(100,Math.round(episode.progress*100))}%`}}/>}</button>)}</div></div>)}</div>}</div>
   </div>;
 }

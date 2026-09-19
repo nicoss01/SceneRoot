@@ -309,6 +309,20 @@ section { margin: 0 0 13px; }
 .episode-title { flex: 1; }
 .episode-title em { color: var(--cyan); font-style: normal; font-size: 12px; }
 .episode-progress { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--cyan); }
+.download-panel { position: relative; width: min(760px, 94vw); max-height: 88vh; overflow: auto; padding: 26px; background: rgba(3,15,27,.97); border: 1px solid #0ea5e9; border-radius: 16px; box-shadow: 0 24px 70px #000c; }
+.download-panel h2 { display: flex; align-items: center; gap: 10px; }
+.download-legal { color: #9fb6cf; font-size: 12px; margin: 6px 0 16px; }
+.download-list { display: flex; flex-direction: column; gap: 10px; }
+.download-row { display: flex; align-items: center; gap: 14px; padding: 13px 15px; background: rgba(6,18,32,.8); border: 1px solid #23405c; border-radius: 11px; }
+.download-row.is-done { border-color: #22c55e; }
+.download-info { flex: 1; min-width: 0; }
+.download-info strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.download-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+.download-badges span { padding: 2px 8px; font-size: 11px; border-radius: 6px; background: #12263c; color: #b9cbe0; }
+.download-badges .lang { background: #14342c; color: #86efac; }
+.download-badges .score { background: #0e2f3a; color: var(--cyan); }
+.download-badges .src { background: #2a1a3a; color: #d8b4fe; }
+.download-row button { flex: 0 0 auto; }
 
 /* Post-play rating */
 .rating-page { min-height: 100vh; position: relative; display: grid; place-items: center; overflow: hidden; background-position: center; background-size: cover; }
