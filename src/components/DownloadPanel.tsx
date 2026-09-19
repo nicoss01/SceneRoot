@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Check, Download, Loader2, X } from 'lucide-react';
+import { parseRelease } from '../lib/release';
 import type { MediaItem } from '../types';
 
 type SourceResult = { source: string; title: string; link?: string; size: number; seeders: number; published?: string };
@@ -10,22 +11,6 @@ function formatBytes(bytes: number) {
   const units = ['o', 'Ko', 'Mo', 'Go', 'To'];
   const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
   return `${(bytes / 1024 ** i).toFixed(i >= 3 ? 1 : 0)} ${units[i]}`;
-}
-
-function parseRelease(title: string) {
-  const t = title.toLowerCase();
-  const quality = /2160p|4k|uhd/.test(t) ? '2160p' : /1080p/.test(t) ? '1080p' : /720p/.test(t) ? '720p' : /480p/.test(t) ? '480p' : 'SD';
-  const hdr = /hdr|dolby.?vision|\bdv\b/.test(t);
-  const codec = /x265|hevc|h\.?265/.test(t) ? 'HEVC' : /x264|h\.?264|avc/.test(t) ? 'H.264' : undefined;
-  const languages: string[] = [];
-  if (/multi/.test(t)) languages.push('multi');
-  if (/truefrench|\btruefr\b/.test(t)) languages.push('truefrench');
-  if (/\bvff\b|\bvff\b/.test(t)) languages.push('vff');
-  if (/french|\bfr\b|vf\b|\bvfi\b/.test(t)) languages.push('french');
-  if (/vostfr/.test(t)) languages.push('vostfr');
-  if (/english|\beng\b|\ben\b/.test(t)) languages.push('english');
-  if (!languages.length) languages.push('inconnu');
-  return { quality, hdr, codec, languages: [...new Set(languages)] };
 }
 
 export function DownloadPanel({ item, onClose }: { item: MediaItem; onClose: () => void }) {

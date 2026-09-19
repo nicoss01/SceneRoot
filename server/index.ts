@@ -8,6 +8,8 @@ import { execFile, spawn } from 'node:child_process';
 import { createConnection } from 'node:net';
 import { promisify } from 'node:util';
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
+import { recommendGroup } from './lib/recommend.js';
+import { rankDownloads, type RankCandidate, type RankPrefs } from './lib/rank.js';
 
 type Rating = { profileId: string; mediaId: string; score: number; tags: string[]; at: string };
 type ProfileRecord = { id:string; name:string; ageLimit:number; avatar:string; accent:string; pinHash?:string; createdAt:string };
@@ -149,28 +151,11 @@ app.get<{Params:{profileId:string}}>('/api/playback/:profileId',async request=>{
 app.get<{Params:{profileId:string}}>('/api/history/:profileId',async request=>{const db=loadDb();const groups=groupLibrary(db.library);const prefix=`${request.params.profileId}:`;const seen=new Map<string,{group:LibraryGroup;mediaId:string;progress:number;position:number;duration:number;updatedAt:string;completed:boolean;rating?:number;tags?:string[]}>();for(const[key,value]of Object.entries(db.playback)){if(!key.startsWith(prefix))continue;const entry=playbackEntry(value);if(!entry)continue;const mediaId=key.slice(prefix.length);const group=groupForMedia(groups,mediaId);if(!group)continue;const progress=entry.duration>0?entry.position/entry.duration:0;seen.set(group.id,{group,mediaId,progress,position:entry.position,duration:entry.duration,updatedAt:entry.updatedAt,completed:progress>=0.92})}for(const rating of db.ratings.filter(r=>r.profileId===request.params.profileId)){const group=groupForMedia(groups,rating.mediaId);if(!group)continue;const existing=seen.get(group.id);if(existing){existing.rating=rating.score;existing.tags=rating.tags;if(rating.at>existing.updatedAt)existing.updatedAt=rating.at}else seen.set(group.id,{group,mediaId:rating.mediaId,progress:0,position:0,duration:0,updatedAt:rating.at,completed:true,rating:rating.score,tags:rating.tags})}return[...seen.values()].sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt))});
 app.get<{Params:{profileId:string}}>('/api/ratings/:profileId',async request=>loadDb().ratings.filter(rating=>rating.profileId===request.params.profileId));
 app.post<{Body:{profileIds:string[];candidates:Array<{id:string;genres:string[];ageRating?:number}>;preferUnseen?:boolean}}>('/api/recommendations/group',async request=>{
-  const db=loadDb();const{profileIds,candidates}=request.body;const preferUnseen=request.body.preferUnseen!==false;
-  const groups=groupLibrary(db.library);
-  const genresOfMedia=(mediaId:string):string[]=>{const inCandidate=candidates.find(candidate=>candidate.id===mediaId);if(inCandidate?.genres?.length)return inCandidate.genres;return groupForMedia(groups,mediaId)?.metadata?.genres??[]};
-  const profileTaste=new Map<string,Record<string,{sum:number;weight:number}>>();const seenByProfile=new Map<string,Set<string>>();
-  for(const profileId of profileIds){
-    const taste:Record<string,{sum:number;weight:number}>={};const seen=new Set<string>();
-    for(const rating of db.ratings.filter(r=>r.profileId===profileId)){const value=Math.max(0,Math.min(100,rating.score*10));for(const genre of genresOfMedia(rating.mediaId)){const t=taste[genre]??{sum:0,weight:0};t.sum+=value;t.weight+=1;taste[genre]=t}seen.add(rating.mediaId)}
-    for(const[key,raw]of Object.entries(db.playback)){if(!key.startsWith(`${profileId}:`))continue;const mediaId=key.slice(profileId.length+1);const entry=playbackEntry(raw);if(!entry)continue;const progress=entry.duration>0?entry.position/entry.duration:0;if(progress<0.9)continue;seen.add(mediaId);if(!db.ratings.some(r=>r.profileId===profileId&&r.mediaId===mediaId))for(const genre of genresOfMedia(mediaId)){const t=taste[genre]??{sum:0,weight:0};t.sum+=75;t.weight+=0.5;taste[genre]=t}}
-    profileTaste.set(profileId,taste);seenByProfile.set(profileId,seen);
-  }
-  const genreAffinity=(profileId:string,genre:string)=>{const t=profileTaste.get(profileId)?.[genre];return t&&t.weight>0?t.sum/t.weight:65};
-  const predict=(profileId:string,candidate:{id:string;genres:string[]})=>{const rating=db.ratings.find(r=>r.profileId===profileId&&r.mediaId===candidate.id);if(rating)return Math.max(0,Math.min(100,rating.score*10));const genres=candidate.genres?.length?candidate.genres:['(inconnu)'];return genres.map(genre=>genreAffinity(profileId,genre)).reduce((a,b)=>a+b,0)/genres.length};
-  const profileById=new Map(db.profiles.map(profile=>[profile.id,profile]));
-  return candidates.map(candidate=>{
-    const affinities=profileIds.map(profileId=>Math.round(predict(profileId,candidate)));
-    const average=affinities.reduce((a,b)=>a+b,0)/Math.max(1,affinities.length);
-    const disagreement=affinities.length?Math.max(...affinities)-Math.min(...affinities):0;
-    const seenBy=profileIds.filter(profileId=>seenByProfile.get(profileId)?.has(candidate.id));
-    let score=average-0.42*disagreement;if(preferUnseen&&seenBy.length)score-=12*(seenBy.length/Math.max(1,profileIds.length));
-    let allowed=true;if(typeof candidate.ageRating==='number')for(const profileId of profileIds){const limit=profileById.get(profileId)?.ageLimit;if(typeof limit==='number'&&candidate.ageRating>limit)allowed=false}
-    return{id:candidate.id,score:Math.round(score),average:Math.round(average),disagreement:Math.round(disagreement),affinities,seenBy,allowed};
-  }).filter(candidate=>candidate.allowed).sort((a,b)=>b.score-a.score);
+  const db=loadDb();const{profileIds,candidates}=request.body;const groups=groupLibrary(db.library);
+  const genresOf=(mediaId:string)=>{const inCandidate=candidates.find(candidate=>candidate.id===mediaId);if(inCandidate?.genres?.length)return inCandidate.genres;return groupForMedia(groups,mediaId)?.metadata?.genres??[]};
+  const playback=Object.entries(db.playback).flatMap(([key,raw])=>{const entry=playbackEntry(raw);if(!entry)return[];const sep=key.indexOf(':');return[{profileId:key.slice(0,sep),mediaId:key.slice(sep+1),progress:entry.duration>0?entry.position/entry.duration:0}]});
+  const ageLimits=Object.fromEntries(db.profiles.map(profile=>[profile.id,profile.ageLimit]));
+  return recommendGroup(profileIds,candidates,{ratings:db.ratings,playback,genresOf,ageLimits},request.body.preferUnseen!==false);
 });
 app.post<{Body:{ttl:'shutdown'|'24h'|'7d'|'permanent';ageLimit:number}}>('/api/guests',async request=>({id:`guest-${Date.now()}`,temporary:request.body.ttl!=='permanent',expiresAt:request.body.ttl==='24h'?Date.now()+86400000:request.body.ttl==='7d'?Date.now()+604800000:null,ageLimit:request.body.ageLimit}));
 
@@ -186,7 +171,7 @@ app.post<{Body:{magnet:string;expectedBytes?:number}}>('/api/downloads', async (
 });
 app.get('/api/downloads', async (_request,reply)=>{try{const response=await transmission('torrent-get',{fields:['id','name','percentDone','rateDownload','rateUpload','status','totalSize','sizeWhenDone','eta','errorString','downloadDir','peersConnected']});if(!response.ok)return reply.code(502).send({error:'Transmission indisponible'});const payload=await response.json() as {arguments?:{torrents?:unknown[]}};return payload.arguments?.torrents??[]}catch(error){return reply.code((error as {statusCode?:number}).statusCode??503).send({error:(error as Error).message})}});
 app.post<{Params:{id:string};Body:{action:'start'|'stop'|'remove';deleteData?:boolean}}>('/api/downloads/:id/control', async (request,reply)=>{const id=Number(request.params.id);if(!Number.isFinite(id))return reply.code(400).send({error:'Identifiant invalide'});const method={start:'torrent-start',stop:'torrent-stop',remove:'torrent-remove'}[request.body.action];if(!method)return reply.code(400).send({error:'Action inconnue'});try{const args:Record<string,unknown>=request.body.action==='remove'?{ids:[id],'delete-local-data':Boolean(request.body.deleteData)}:{ids:[id]};const response=await transmission(method,args);if(!response.ok)return reply.code(502).send({error:'Transmission indisponible'});return{ok:true}}catch(error){return reply.code((error as {statusCode?:number}).statusCode??503).send({error:(error as Error).message})}});
-app.post<{Body:{kind:'film'|'serie';preferredQuality?:string;preferredLanguages?:string[];preferHdr?:boolean;maxBytes?:number;candidates:Array<{id:string;title:string;quality:string;languages:string[];hdr:boolean;size:number;seeders:number;codec?:string}>}}>('/api/downloads/rank',async request=>request.body.candidates.map(candidate=>{let score=Math.min(30,Math.log2(candidate.seeders+1)*5);if(candidate.quality===request.body.preferredQuality)score+=28;if(request.body.preferredLanguages?.some(l=>candidate.languages.includes(l)))score+=22;if(request.body.preferHdr&&candidate.hdr)score+=10;if(request.body.maxBytes&&candidate.size>request.body.maxBytes)score-=35;if(/hevc|h265/i.test(candidate.codec??''))score+=6;return{...candidate,compatibilityScore:Math.round(score)}}).sort((a,b)=>b.compatibilityScore-a.compatibilityScore));
+app.post<{Body:RankPrefs&{kind?:'film'|'serie';candidates:RankCandidate[]}}>('/api/downloads/rank',async request=>rankDownloads(request.body.candidates,request.body));
 app.post('/api/cec/:action', async (request,reply)=>{
   const action=(request.params as {action:string}).action; const commands:Record<string,string>={active:'as',standby:'tx 10:36',scan:'scan'}; if(!commands[action])return reply.code(400).send({error:'Action CEC inconnue'});
   const child=spawn('cec-client',commands[action].split(' '),{stdio:'ignore'}); child.on('error',()=>{}); return {ok:true};
