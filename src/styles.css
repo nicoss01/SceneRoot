@@ -347,6 +347,9 @@ section { margin: 0 0 13px; }
 .download-badges .src { background: #2a1a3a; color: #d8b4fe; }
 .download-row button { flex: 0 0 auto; }
 .download-actions { display: flex; gap: 8px; flex: 0 0 auto; }
+.download-order { display: flex; flex-direction: column; gap: 2px; flex: 0 0 auto; }
+.download-order .icon-btn { padding: 4px; min-width: 0; height: auto; }
+.download-order .icon-btn svg { width: 16px; height: 16px; }
 
 /* Post-play rating */
 .rating-page { min-height: 100vh; position: relative; display: grid; place-items: center; overflow: hidden; background-position: center; background-size: cover; }

@@ -7,7 +7,7 @@ import type { MediaItem } from '../types';
 type SourceResult = { source: string; title: string; link?: string; size: number; seeders: number; published?: string };
 type RankedResult = SourceResult & { id: string; quality: string; languages: string[]; hdr: boolean; codec?: string; compatibilityScore: number };
 
-export function DownloadPanel({ item, onClose }: { item: MediaItem; onClose: () => void }) {
+export function DownloadPanel({ item, onClose, priority = false, onQueued }: { item: MediaItem; onClose: () => void; priority?: boolean; onQueued?: () => void }) {
   const [results, setResults] = useState<RankedResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -48,16 +48,22 @@ export function DownloadPanel({ item, onClose }: { item: MediaItem; onClose: () 
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ magnet: result.link, expectedBytes: result.size }),
       });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error((payload as { error?: string }).error ?? `Échec (${response.status})`);
+      const payload = await response.json().catch(() => ({})) as { error?: string; arguments?: { 'torrent-added'?: { id?: number }; 'torrent-duplicate'?: { id?: number } } };
+      if (!response.ok) throw new Error(payload.error ?? `Échec (${response.status})`);
+      const torrentId = payload.arguments?.['torrent-added']?.id ?? payload.arguments?.['torrent-duplicate']?.id;
+      if (priority && typeof torrentId === 'number') {
+        await fetch(`/api/downloads/${torrentId}/control`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'queue-top' }) }).catch(() => {});
+      }
       setLaunched(result.id);
+      onQueued?.();
     } catch (cause) { setLaunchError((cause as Error).message); } finally { setLaunching(null); }
   };
 
   return <div className="modal-backdrop" onClick={onClose}>
     <div className="download-panel" onClick={event => event.stopPropagation()}>
       <button className="modal-close" onClick={onClose}><X /></button>
-      <h2><Download /> Télécharger « {item.title} »</h2>
+      <h2><Download /> {priority ? 'Télécharger et regarder' : 'Télécharger'} « {item.title} »</h2>
+      {priority && <p className="download-legal">Le titre sera téléchargé en priorité. La lecture sera disponible dans la médiathèque une fois le fichier prêt (reprise automatique de la progression).</p>}
       <p className="download-legal">Utilisez uniquement des sources et des contenus que vous êtes autorisé à récupérer.</p>
       {loading && <div className="library-loading"><i /> Recherche sur vos sources…</div>}
       {error && <div className="profile-error">{error}</div>}

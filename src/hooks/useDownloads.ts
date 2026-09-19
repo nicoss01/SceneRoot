@@ -12,7 +12,10 @@ export type Torrent = {
   eta: number;
   errorString?: string;
   peersConnected: number;
+  queuePosition: number;
 };
+
+export type DownloadAction = 'start' | 'stop' | 'remove' | 'queue-top' | 'queue-up' | 'queue-down' | 'queue-bottom';
 
 export function useDownloads(pollMs = 2000) {
   const [torrents, setTorrents] = useState<Torrent[]>([]);
@@ -29,7 +32,7 @@ export function useDownloads(pollMs = 2000) {
       setError('');
     } catch (cause) { setError((cause as Error).message); } finally { setLoading(false); }
   }, []);
-  const control = useCallback(async (id: number, action: 'start' | 'stop' | 'remove', deleteData = false) => {
+  const control = useCallback(async (id: number, action: DownloadAction, deleteData = false) => {
     await fetch(`/api/downloads/${id}/control`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, deleteData }) });
     await refresh();
   }, [refresh]);
