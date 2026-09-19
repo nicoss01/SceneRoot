@@ -12,7 +12,8 @@ import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypt
 import { recommendGroup } from './lib/recommend.js';
 import { rankDownloads, type RankCandidate, type RankPrefs } from './lib/rank.js';
 import { isAllowedOrigin, parseAllowedOrigins } from './lib/cors.js';
-import { atomicWriteJson, readJson } from './lib/jsonStore.js';
+import { atomicWriteJson } from './lib/jsonStore.js';
+import { createStore, type StoredDb } from './lib/store.js';
 import { bearerToken, isAdminAuthorized, requiresAdmin } from './lib/auth.js';
 import { maskSource, sanitizeSource, type TorznabSource } from './lib/sources.js';
 
@@ -33,7 +34,6 @@ type CachedResult<T> = { data:T; cachedAt:string; state:'hit'|'miss'|'stale' };
 const app = Fastify({ logger: true });
 const port = Number(process.env.SCENEROOT_PORT ?? 4174);
 const dataDir = resolve(process.env.SCENEROOT_DATA ?? './data');
-const dbPath = join(dataDir, 'sceneroot.json');
 const cacheDir = join(dataDir, 'cache');
 const mediaRoots = (process.env.SCENEROOT_MEDIA ?? '/mnt/media').split(',').map(x => resolve(x.trim()));
 const downloadDir = resolve(mediaRoots[0] ? join(mediaRoots[0], 'downloads') : join(process.env.SCENEROOT_DATA ?? './data', 'downloads'));
@@ -64,11 +64,12 @@ async function cachedJson<T>(key:string,url:string,ttlMs:number):Promise<CachedR
   pendingCacheRequests.set(key,request as Promise<CachedResult<unknown>>);return request;
 }
 
+const store=createStore(dataDir);
 function loadDb(): Db {
   const empty:Db={ profiles: [], library: [], ratings: [], playback: {}, settings: {}, guests: [] };
-  return {...empty,...readJson<Partial<Db>>(dbPath, empty)};
+  return {...empty,...(store.load() as unknown as Partial<Db>)};
 }
-function saveDb(db: Db) { atomicWriteJson(dbPath, db); }
+function saveDb(db: Db) { store.save(db as unknown as StoredDb); }
 function purgeExpiredGuests(clearEphemeral=false){const db=loadDb();const now=Date.now();const keep=db.guests.filter(guest=>(!clearEphemeral||!guest.ephemeral)&&(guest.expiresAt===null||guest.expiresAt>now));if(keep.length===db.guests.length)return;const removed=new Set(db.guests.filter(guest=>!keep.includes(guest)).map(guest=>guest.id));db.ratings=db.ratings.filter(rating=>!removed.has(rating.profileId));for(const key of Object.keys(db.playback))if(removed.has(key.slice(0,key.indexOf(':'))))delete db.playback[key];db.guests=keep;saveDb(db)}
 function hashPin(pin:string){const salt=randomBytes(16);const digest=scryptSync(pin,salt,32);return`${salt.toString('hex')}:${digest.toString('hex')}`}
 function verifyPin(pin:string,stored:string){try{const[saltHex,digestHex]=stored.split(':');const expected=Buffer.from(digestHex,'hex');const actual=scryptSync(pin,Buffer.from(saltHex,'hex'),expected.length);return timingSafeEqual(actual,expected)}catch{return false}}
@@ -149,7 +150,7 @@ app.addHook('onRequest',async(request,reply)=>{
   if(!isAdminAuthorized(request.ip,token,process.env.SCENEROOT_ADMIN_TOKEN))return reply.code(401).send({error:'Administration réservée : accès distant refusé (token requis)'});
 });
 function lanAddresses(){const out:string[]=[];for(const entries of Object.values(networkInterfaces()))for(const entry of entries??[])if(entry.family==='IPv4'&&!entry.internal)out.push(entry.address);return out}
-app.get('/api/health', async () => ({ ok:true, version:'0.1.0', mediaRoots, port, addresses:lanAddresses() }));
+app.get('/api/health', async () => ({ ok:true, version:'0.1.0', mediaRoots, port, addresses:lanAddresses(), storage:store.backend }));
 app.get('/api/profiles',async()=>loadDb().profiles.map(({pinHash,...profile})=>({...profile,locked:Boolean(pinHash)})));
 app.post<{Body:{name:string;ageLimit:number;avatar?:string;accent?:string;pin?:string}}>('/api/profiles',{schema:{body:{type:'object',required:['name'],properties:{name:{type:'string',minLength:1,maxLength:40},ageLimit:{type:'number'},avatar:{type:'string'},accent:{type:'string'},pin:{type:'string',pattern:'^[0-9]{0,8}$'}}}}},async(request,reply)=>{const name=request.body.name?.trim();if(!name)return reply.code(400).send({error:'Le nom est obligatoire'});const db=loadDb();const profile:ProfileRecord={id:randomUUID(),name,ageLimit:Math.max(0,Math.min(18,Number(request.body.ageLimit??18))),avatar:safeAvatar(request.body.avatar,name[0].toUpperCase()),accent:safeAccent(request.body.accent),createdAt:new Date().toISOString(),pinHash:request.body.pin?hashPin(request.body.pin):undefined};db.profiles.push(profile);saveDb(db);const{pinHash,...safe}=profile;return reply.code(201).send({...safe,locked:Boolean(pinHash)})});
 app.put<{Params:{id:string};Body:{name:string;ageLimit:number;avatar?:string;accent?:string;pin?:string|null}}>('/api/profiles/:id',async(request,reply)=>{const name=request.body.name?.trim();if(!name)return reply.code(400).send({error:'Le nom est obligatoire'});const db=loadDb();let profile=db.profiles.find(item=>item.id===request.params.id);if(!profile){profile={id:request.params.id,name,ageLimit:18,avatar:name[0].toUpperCase(),accent:'#22d3ee',createdAt:new Date().toISOString()};db.profiles.push(profile)}profile.name=name;profile.ageLimit=Math.max(0,Math.min(18,Number(request.body.ageLimit??profile.ageLimit)));profile.avatar=safeAvatar(request.body.avatar,profile.avatar||name[0].toUpperCase());profile.accent=safeAccent(request.body.accent??profile.accent);if(request.body.pin===null||request.body.pin==='')delete profile.pinHash;else if(request.body.pin!==undefined)profile.pinHash=hashPin(request.body.pin);saveDb(db);const{pinHash,...safe}=profile;return{...safe,locked:Boolean(pinHash)}});
