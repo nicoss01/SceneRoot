@@ -1,8 +1,10 @@
 import { Check, Search, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { LibraryGroup, LibraryMetadata } from '../hooks/useLibrary';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 export function MetadataMatcher({group,onClose,onMatched}:{group:LibraryGroup;onClose:()=>void;onMatched:()=>void}) {
+  useEscapeClose(onClose);
   const[query,setQuery]=useState(group.title);const[candidates,setCandidates]=useState<LibraryMetadata[]>([]);const[loading,setLoading]=useState(false);const[saving,setSaving]=useState<number|string|null>(null);const[error,setError]=useState('');
   const search=async()=>{setLoading(true);setError('');try{const params=new URLSearchParams({q:query,kind:group.kind});if(group.year)params.set('year',String(group.year));const response=await fetch(`/api/metadata/search?${params}`);if(!response.ok)throw new Error('Recherche indisponible');setCandidates(await response.json() as LibraryMetadata[])}catch(cause){setError((cause as Error).message)}finally{setLoading(false)}};
   useEffect(()=>{void search()},[]);

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Check, Download, Loader2, X } from 'lucide-react';
 import { parseRelease } from '../lib/release';
 import { formatBytes } from '../lib/format';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 import type { MediaItem } from '../types';
 
 type SourceResult = { source: string; title: string; link?: string; size: number; seeders: number; published?: string };
@@ -17,9 +18,11 @@ export function DownloadPanel({ item, onClose, priority = false, onQueued }: { i
   const [season, setSeason] = useState(1);
   const [episode, setEpisode] = useState(1);
   const [wholeSeason, setWholeSeason] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<Array<{ source: string; status: number; count: number; error?: string }>>([]);
   const kind = item.kind === 'serie' ? 'tv' : 'movie';
   const query = useMemo(() => item.title, [item.title]);
   const isSeries = item.kind === 'serie';
+  useEscapeClose(onClose);
 
   useEffect(() => {
     let active = true;
@@ -30,6 +33,7 @@ export function DownloadPanel({ item, onClose, priority = false, onQueued }: { i
         if (isSeries) { params.set('season', String(season)); if (!wholeSeason) params.set('episode', String(episode)); }
         const response = await fetch(`/api/sources/search?${params}`);
         if (!response.ok) throw new Error(`Recherche indisponible (${response.status})`);
+        try { const raw = response.headers.get('X-SceneRoot-Sources'); if (raw && active) setDiagnostics(JSON.parse(raw)); } catch { /* diagnostic facultatif */ }
         const rows = await response.json() as SourceResult[];
         if (!rows.length) { if (active) { setResults([]); setLoading(false); } return; }
         const candidates = rows.map((row, index) => ({ ...row, id: `dl-${index}`, ...parseRelease(row.title) }));
@@ -77,7 +81,13 @@ export function DownloadPanel({ item, onClose, priority = false, onQueued }: { i
       </div>}
       {loading && <div className="library-loading"><i /> Recherche sur vos sources…</div>}
       {error && <div className="profile-error">{error}</div>}
-      {!loading && !error && !results.length && <div className="library-empty"><Download /><h3>Aucun résultat</h3><p>Aucune source configurée n’a répondu, ou aucune version ne correspond. Ajoutez une source Torznab dans les paramètres.</p></div>}
+      {!loading && !error && !results.length && <div className="library-empty"><Download /><h3>Aucun résultat</h3><p>Aucune source configurée n’a répondu, ou aucune version ne correspond. Ajoutez une source Torznab dans les paramètres.</p>
+        {diagnostics.length > 0 && <div className="source-diagnostics">{diagnostics.map(entry => <div key={entry.source}>
+          <strong>{entry.source}</strong> — {entry.error ? `injoignable : ${entry.error}` : `HTTP ${entry.status} · ${entry.count} résultat${entry.count > 1 ? 's' : ''}`}
+          {!entry.error && entry.status === 200 && entry.count === 0 && <em> (la source répond mais ne renvoie rien : vérifiez l’URL Torznab, la clé et les catégories)</em>}
+          {!entry.error && entry.status >= 400 && <em> (URL ou clé API incorrecte)</em>}
+        </div>)}</div>}
+      </div>}
       {results.length > 0 && <div className="download-list">{results.map(result => <div className={`download-row ${launched === result.id ? 'is-done' : ''}`} key={result.id}>
         <div className="download-info">
           <strong>{result.title}</strong>

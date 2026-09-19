@@ -52,7 +52,10 @@ echo "SceneRoot : démarrage de Chromium avec une échelle TV de ${TV_SCALE}x" >
 
 # Chromium a besoin d'un bus D-Bus de session : on l'enveloppe ici plutôt que
 # d'englober Cage (dbus-run-session autour de Cage fait échouer le service).
-LAUNCH=("$BROWSER" "${FLAGS[@]}" "$URL")
+# Zoom d'interface pour la TV (lisibilité à distance). Appliqué par l'application
+# elle-même via ?tv=..., et non par --force-device-scale-factor qui casse le rendu.
+TV_ZOOM="${SCENEROOT_TV_ZOOM:-1.35}"
+LAUNCH=("$BROWSER" "${FLAGS[@]}" "${URL%/}/?tv=$TV_ZOOM")
 if command -v dbus-run-session >/dev/null 2>&1; then
   LAUNCH=(dbus-run-session -- "${LAUNCH[@]}")
 fi

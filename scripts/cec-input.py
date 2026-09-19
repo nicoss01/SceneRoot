@@ -19,9 +19,10 @@ KEYS = {
     "down": (ecodes.KEY_DOWN,),
     "left": (ecodes.KEY_LEFT,),
     "right": (ecodes.KEY_RIGHT,),
-    "exit": (ecodes.KEY_LEFTALT, ecodes.KEY_LEFT),
-    "back": (ecodes.KEY_LEFTALT, ecodes.KEY_LEFT),
-    "previous channel": (ecodes.KEY_LEFTALT, ecodes.KEY_LEFT),
+    # Échap : ferme la boîte de dialogue ouverte, sinon revient à l'écran précédent.
+    "exit": (ecodes.KEY_ESC,),
+    "back": (ecodes.KEY_ESC,),
+    "previous channel": (ecodes.KEY_ESC,),
     "play": (ecodes.KEY_SPACE,),
     "pause": (ecodes.KEY_SPACE,),
     "play/pause": (ecodes.KEY_SPACE,),

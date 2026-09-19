@@ -17,6 +17,7 @@ import { useSeriesEpisodes } from './hooks/useSeriesEpisodes';
 import { usePlayerChrome } from './hooks/usePlayerChrome';
 import { useResolvedMedia } from './hooks/useResolvedMedia';
 import { usePreferences } from './hooks/usePreferences';
+import { useEscapeClose } from './hooks/useEscapeClose';
 import { WatchedContext } from './context/watched';
 import { formatBytes } from './lib/format';
 import { matchesDuration, matchesSearchFilters, type DurationBucket } from './lib/filters';
@@ -46,6 +47,7 @@ function BootScreen() {
 
 function ProfileGate({ onSelect, availableProfiles, onSaved, onDeleted }: { onSelect: (profile: Profile) => void; availableProfiles:Profile[]; onSaved:(profile:Profile)=>void; onDeleted:(profile:Profile)=>void }) {
   const [modal,setModal]=useState<'guest'|'profile'|'unlock'|null>(null);
+  useEscapeClose(()=>setModal(null),modal==='guest'||modal==='unlock');
   const [editing,setEditing]=useState<Profile|undefined>(); const [unlocking,setUnlocking]=useState<Profile|undefined>();
   const [pin,setPin]=useState(''); const [unlockError,setUnlockError]=useState('');
   const [age,setAge]=useState(18); const [guestTtl,setGuestTtl]=useState('shutdown');
@@ -415,6 +417,14 @@ function App() {
   useEffect(()=>{const timer=setTimeout(()=>setBooting(false),1450);return()=>clearTimeout(timer)},[]);
   useEffect(()=>{void refetchProfiles()},[refetchProfiles]);
   useEffect(()=>{fetch('/api/settings').then(response=>response.ok?response.json():null).then((data:{setupComplete?:boolean}|null)=>setSetupComplete(Boolean(data?.setupComplete))).catch(()=>setSetupComplete(false))},[]);
+  // Zoom d'interface pour la TV : le kiosque ouvre l'app avec ?tv=<facteur>, qu'on
+  // mémorise pour que le réglage survive à la navigation (sans toucher au navigateur).
+  useEffect(()=>{ try{
+    const param=new URLSearchParams(window.location.search).get('tv');
+    if(param)localStorage.setItem('sceneroot-tv-zoom',param);
+    const zoom=localStorage.getItem('sceneroot-tv-zoom');
+    if(zoom&&Number(zoom)>0)document.documentElement.style.setProperty('zoom',zoom);
+  }catch{/* stockage indisponible : zoom par défaut */} },[]);
   // Masque le pointeur après quelques secondes sans mouvement (sur la TV il disparaît
   // et ne revient jamais ; sur un ordinateur il réapparaît au moindre déplacement).
   useEffect(()=>{ let timer:ReturnType<typeof setTimeout>;

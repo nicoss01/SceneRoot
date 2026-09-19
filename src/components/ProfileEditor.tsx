@@ -2,8 +2,10 @@ import { Lock, Pencil, Save, ShieldOff, Trash2, UserPlus, X } from 'lucide-react
 import { useState } from 'react';
 import { accentForAvatar, avatarChoices } from '../data/avatars';
 import type { Profile } from '../types';
+import { useEscapeClose } from '../hooks/useEscapeClose';
 
 export function ProfileEditor({profile,onClose,onSaved,onDeleted,deletable}:{profile?:Profile;onClose:()=>void;onSaved:(profile:Profile)=>void;onDeleted?:(profile:Profile)=>void;deletable?:boolean}) {
+  useEscapeClose(onClose);
   const[name,setName]=useState(profile?.name??'');const[age,setAge]=useState(profile?.ageLimit??18);const[avatar,setAvatar]=useState(profile?.avatar?.startsWith('/assets/avatars/')?profile.avatar:avatarChoices[0].src);const[pin,setPin]=useState('');const[removePin,setRemovePin]=useState(false);const[saving,setSaving]=useState(false);const[error,setError]=useState('');const[deleting,setDeleting]=useState(false);
   const remove=async()=>{if(!profile||!onDeleted)return;if(!window.confirm(`Supprimer le profil « ${profile.name} » ? Son historique et ses notes seront effacés.`))return;setDeleting(true);setError('');try{const response=await fetch(`/api/profiles/${profile.id}`,{method:'DELETE'});if(!response.ok)throw new Error('Suppression impossible');onDeleted(profile)}catch(cause){setError((cause as Error).message);setDeleting(false)}};
   const submit=async()=>{const clean=name.trim();if(!clean){setError('Saisissez un nom.');return}setSaving(true);setError('');const body:Record<string,unknown>={name:clean,ageLimit:age,avatar,accent:accentForAvatar(avatar)};if(pin)body.pin=pin;else if(removePin)body.pin=null;try{const response=await fetch(profile?`/api/profiles/${profile.id}`:'/api/profiles',{method:profile?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const result=await response.json() as Profile&{error?:string};if(!response.ok)throw new Error(result.error||'Enregistrement impossible');onSaved(result)}catch(cause){setError((cause as Error).message)}finally{setSaving(false)}};
