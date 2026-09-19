@@ -33,6 +33,11 @@ KEYS = {
 
 PRESS = re.compile(r"key pressed:\s*([^\r\n(]+)", re.IGNORECASE)
 
+# libCEC journalise la même pression à plusieurs niveaux de log (et la TV peut
+# répéter l'événement) : on ignore un doublon immédiat de la même touche, ce qui
+# évite d'avancer de deux cases par appui tout en laissant la répétition longue.
+DEBOUNCE_SECONDS = 0.15
+
 
 def emit(ui: UInput, keys: tuple[int, ...]) -> None:
     for key in keys:
@@ -46,6 +51,8 @@ def emit(ui: UInput, keys: tuple[int, ...]) -> None:
 
 def run() -> None:
     capabilities = {ecodes.EV_KEY: sorted({key for chord in KEYS.values() for key in chord})}
+    last_name: str | None = None
+    last_time = 0.0
     with UInput(capabilities, name="SceneRoot HDMI-CEC Remote", bustype=0x03) as ui:
         print("SceneRoot CEC: périphérique virtuel prêt", flush=True)
         while True:
@@ -68,9 +75,14 @@ def run() -> None:
                         continue
                     name = " ".join(match.group(1).strip().lower().split())
                     chord = KEYS.get(name)
-                    if chord:
-                        emit(ui, chord)
-                        print(f"SceneRoot CEC: {name}", flush=True)
+                    if not chord:
+                        continue
+                    now = time.monotonic()
+                    if name == last_name and now - last_time < DEBOUNCE_SECONDS:
+                        continue
+                    last_name, last_time = name, now
+                    emit(ui, chord)
+                    print(f"SceneRoot CEC: {name}", flush=True)
             finally:
                 process.terminate()
                 try:

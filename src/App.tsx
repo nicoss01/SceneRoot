@@ -415,6 +415,15 @@ function App() {
   useEffect(()=>{const timer=setTimeout(()=>setBooting(false),1450);return()=>clearTimeout(timer)},[]);
   useEffect(()=>{void refetchProfiles()},[refetchProfiles]);
   useEffect(()=>{fetch('/api/settings').then(response=>response.ok?response.json():null).then((data:{setupComplete?:boolean}|null)=>setSetupComplete(Boolean(data?.setupComplete))).catch(()=>setSetupComplete(false))},[]);
+  // Masque le pointeur après quelques secondes sans mouvement (sur la TV il disparaît
+  // et ne revient jamais ; sur un ordinateur il réapparaît au moindre déplacement).
+  useEffect(()=>{ let timer:ReturnType<typeof setTimeout>;
+    const hide=()=>document.body.classList.add('hide-cursor');
+    const wake=()=>{ document.body.classList.remove('hide-cursor'); clearTimeout(timer); timer=setTimeout(hide,3000) };
+    wake();
+    window.addEventListener('mousemove',wake); window.addEventListener('mousedown',wake);
+    return()=>{ clearTimeout(timer); window.removeEventListener('mousemove',wake); window.removeEventListener('mousedown',wake); document.body.classList.remove('hide-cursor') };
+  },[]);
   useEffect(()=>{ const handle=(e:KeyboardEvent)=>{ if(!['ArrowRight','ArrowLeft','ArrowUp','ArrowDown'].includes(e.key))return; const els=[...document.querySelectorAll<HTMLElement>('button:not([disabled]),a[href],input,select')].filter(x=>x.offsetParent!==null); const current=document.activeElement as HTMLElement; const r=current?.getBoundingClientRect(); if(!r){els[0]?.focus();return} const horizontal=e.key==='ArrowLeft'||e.key==='ArrowRight'; const sign=e.key==='ArrowLeft'||e.key==='ArrowUp'?-1:1; let best:HTMLElement|undefined,score=Infinity; for(const el of els){if(el===current)continue;const q=el.getBoundingClientRect();const dx=q.left+q.width/2-(r.left+r.width/2),dy=q.top+q.height/2-(r.top+r.height/2);const primary=horizontal?dx:dy;if(Math.sign(primary)!==sign)continue;const secondary=horizontal?dy:dx;const s=Math.abs(primary)+Math.abs(secondary)*2;if(s<score){score=s;best=el}} if(best){e.preventDefault();best.focus()}}; addEventListener('keydown',handle); return()=>removeEventListener('keydown',handle)},[]);
   if(booting||setupComplete===null||!profilesLoaded)return <BootScreen/>;
   const needsSetup=savedProfiles.length===0;

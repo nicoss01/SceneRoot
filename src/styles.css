@@ -302,6 +302,7 @@ section { margin: 0 0 13px; }
 .controls-row button.selected { border-color: var(--cyan); box-shadow: 0 0 16px rgba(14,165,233,.35); }
 .controls-row button:disabled { opacity: .45; }
 .controls-spacer { flex: 1; }
+body.hide-cursor, body.hide-cursor * { cursor: none !important; }
 .player-note { display: block; margin-top: 6px; color: #9fb6cf; font-size: 12px; }
 .player__top, .player__controls, .track-panel { transition: opacity .35s ease; }
 .player.chrome-hidden { cursor: none; }
