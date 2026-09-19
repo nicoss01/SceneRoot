@@ -14,6 +14,7 @@ import { useCatalog } from './hooks/useCatalog';
 import { useLibrary } from './hooks/useLibrary';
 import { useHistory, useResume } from './hooks/usePlaybackHistory';
 import { useLibraryGroup } from './hooks/useLibraryGroup';
+import { useSeriesEpisodes } from './hooks/useSeriesEpisodes';
 import { useResolvedMedia } from './hooks/useResolvedMedia';
 import { formatBytes } from './lib/format';
 import { matchesDuration, matchesSearchFilters, type DurationBucket } from './lib/filters';
@@ -177,12 +178,14 @@ function DetailPage({profile}:{profile:Profile}) {
   const { id } = useParams(); const navigate = useNavigate(); const {item,isLocal}=useResolvedMedia(id);
   const isLocalSeries=isLocal&&item.kind==='serie';
   const [downloading,setDownloading]=useState(false);const [chosenVersion,setChosenVersion]=useState<string|undefined>();
-  const {seasons,detail}=useLibraryGroup(id,profile.id,isLocal);
-  const nextId=detail?.nextEpisodeId;
+  const {detail}=useLibraryGroup(id,profile.id,isLocal);
+  const series=useSeriesEpisodes(id,profile.id,isLocalSeries,item.title,item.art);
+  const richEpisodes=series.seasons.flatMap(season=>season.episodes);
+  const nextId=richEpisodes.find(episode=>episode.progress<0.9)?.id??detail?.nextEpisodeId;
   const filmVersions=(detail&&item.kind==='film')?detail.versions:[];
   const activeVersion=chosenVersion??item.id;
   const playTarget=item.kind==='serie'?(nextId??item.id):activeVersion;
-  const nextEpisode=seasons.flatMap(season=>season.episodes.map(episode=>({...episode,season:season.season}))).find(episode=>episode.id===nextId);
+  const nextEpisode=richEpisodes.find(episode=>episode.id===nextId);
   const nextStarted=nextEpisode?(nextEpisode.progress>0.02&&nextEpisode.progress<0.9):Boolean(item.progress);
   const playLabel=isLocalSeries?(nextEpisode?`${nextStarted?'Reprendre':'Lire'} S${nextEpisode.season}E${String(nextEpisode.episode).padStart(2,'0')}`:'Lire'):(item.progress?'Reprendre':'Lire');
   return <div className="detail" style={{ '--a': item.palette[0], '--b': item.palette[1], backgroundImage:`linear-gradient(90deg,rgba(1,7,14,.94) 8%,rgba(1,7,14,.28)), url('${item.art??'/assets/sceneroot-landscape.png'}')` } as React.CSSProperties}>
@@ -192,7 +195,7 @@ function DetailPage({profile}:{profile:Profile}) {
     <div className="actions"><button className="primary focusable" onClick={()=>navigate(`/player/${playTarget}`)}><Play fill="currentColor"/> {playLabel}</button><button className="secondary focusable" onClick={()=>setDownloading(true)}><Download/> Télécharger</button><button className="icon-btn focusable"><Heart/></button></div>
     {item.kind==='film'&&filmVersions.length>1&&<div className="versions"><h3>{filmVersions.length} versions disponibles</h3><div className="version-list">{filmVersions.map(version=><button className={`version focusable ${activeVersion===version.id?'is-selected':''}`} key={version.id} onClick={()=>setChosenVersion(version.id)}>{versionLabel(version)}{activeVersion===version.id&&<Check/>}</button>)}</div></div>}
     {downloading&&<DownloadPanel item={item} onClose={()=>setDownloading(false)}/>}
-    {isLocalSeries&&seasons.length>0&&<div className="episodes">{seasons.map(season=><div className="season" key={season.season}><h3>Saison {season.season} · {season.episodes.length} épisode{season.episodes.length>1?'s':''}</h3><div className="episode-list">{season.episodes.map(episode=><button className={`episode focusable ${episode.id===nextId?'is-next':''}`} key={episode.id} onClick={()=>navigate(`/player/${episode.id}`)}><span className="episode-num">E{String(episode.episode).padStart(2,'0')}</span><span className="episode-title">{episode.title}{episode.id===nextId&&<em> · à suivre</em>}</span><Play size={16} fill="currentColor"/>{episode.progress>0.02&&<i className="episode-progress" style={{width:`${Math.min(100,Math.round(episode.progress*100))}%`}}/>}</button>)}</div></div>)}</div>}</div>
+    {isLocalSeries&&(series.loading||series.seasons.length>0)&&<div className="episodes"><div className="episodes-head"><h2>Épisodes</h2>{series.source&&<span>Infos épisodes : {series.source}</span>}</div>{series.loading&&!series.seasons.length&&<div className="library-loading"><i/>Chargement des épisodes…</div>}{series.seasons.map(season=><div className="season" key={season.season}><h3>Saison {season.season} · {season.episodes.length} épisode{season.episodes.length>1?'s':''}</h3><div className="episode-cards">{season.episodes.map(episode=><button className={`episode-card focusable ${episode.id===nextId?'is-next':''}`} key={episode.id} onClick={()=>navigate(`/player/${episode.id}`)}><div className="episode-still" style={{'--a':item.palette[0],'--b':item.palette[1]} as React.CSSProperties}>{episode.still?<img src={episode.still} alt="" loading="lazy" decoding="async" onError={event=>{event.currentTarget.style.display='none'}}/>:<span>{item.symbol}</span>}<span className="episode-play"><Play size={18} fill="currentColor"/></span>{episode.progress>0.02&&<i className="episode-progress" style={{width:`${Math.min(100,Math.round(episode.progress*100))}%`}}/>}</div><div className="episode-body"><strong>E{String(episode.episode).padStart(2,'0')} · {episode.title}{episode.id===nextId&&<em> · à suivre</em>}{episode.versions>1&&<em> · {episode.versions} versions</em>}</strong>{episode.overview&&<p>{episode.overview}</p>}</div></button>)}</div></div>)}</div>}</div>
   </div>;
 }
 
