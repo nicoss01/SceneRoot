@@ -35,7 +35,8 @@ function BootScreen() {
   </div>;
 }
 
-function ProfileGate({ onSelect, availableProfiles, onSaved }: { onSelect: (profile: Profile) => void; availableProfiles:Profile[]; onSaved:(profile:Profile)=>void }) {
+function ProfileGate({ onSelect, availableProfiles, onSaved, onDeleted }: { onSelect: (profile: Profile) => void; availableProfiles:Profile[]; onSaved:(profile:Profile)=>void; onDeleted:(profile:Profile)=>void }) {
+  const isDefault=(id:string)=>profiles.some(base=>base.id===id);
   const [modal,setModal]=useState<'guest'|'profile'|'unlock'|null>(null);
   const [editing,setEditing]=useState<Profile|undefined>(); const [unlocking,setUnlocking]=useState<Profile|undefined>();
   const [pin,setPin]=useState(''); const [unlockError,setUnlockError]=useState('');
@@ -51,7 +52,7 @@ function ProfileGate({ onSelect, availableProfiles, onSaved }: { onSelect: (prof
       <button className="profile-edit focusable" title={`Modifier le profil ${profile.name}`} aria-label={`Modifier le profil ${profile.name}`} onClick={()=>{setEditing(profile);setModal('profile')}}><Pencil/></button>
     </div>)}</div>
     <div className="gate-actions"><button className="add-profile focusable" onClick={()=>{setEditing(undefined);setModal('profile')}}><Plus /> Ajouter un profil</button><button className="add-profile focusable" onClick={()=>setModal('guest')}><Users/> Invité</button></div>
-    {modal==='profile'&&<ProfileEditor profile={editing} onClose={()=>setModal(null)} onSaved={saved=>{onSaved(saved);setModal(null);if(!editing)onSelect(saved)}}/>}
+    {modal==='profile'&&<ProfileEditor profile={editing} deletable={editing?!isDefault(editing.id):false} onClose={()=>setModal(null)} onSaved={saved=>{onSaved(saved);setModal(null);if(!editing)onSelect(saved)}} onDeleted={deleted=>{onDeleted(deleted);setModal(null)}}/>}
     {modal==='guest'&&<div className="modal-backdrop"><div className="profile-modal"><button className="modal-close" onClick={()=>setModal(null)}><X/></button><span className="modal-icon"><Users/></span><h2>Session invitée</h2><p>Cette session ne modifiera pas les recommandations de la famille.</p><label>Limite d’âge<select value={age} onChange={e=>setAge(Number(e.target.value))}><option value="18">Tout public</option><option value="10">-10</option><option value="13">-13</option><option value="16">-16</option></select></label><label>Conserver le profil<select value={guestTtl} onChange={e=>setGuestTtl(e.target.value)}><option value="shutdown">Jusqu’à extinction</option><option value="24h">24 heures</option><option value="7d">7 jours</option><option value="permanent">Conserver ce profil</option></select></label><button className="primary modal-submit" onClick={createGuest}>Commencer</button></div></div>}
     {modal==='unlock'&&unlocking&&<div className="modal-backdrop"><div className="profile-modal unlock-modal"><button className="modal-close" onClick={()=>setModal(null)}><X/></button><ProfileAvatar profile={unlocking}/><h2>{unlocking.name}</h2><p>Entrez le code de verrouillage de ce profil.</p><label>Code<input autoFocus type="password" inputMode="numeric" value={pin} onChange={event=>setPin(event.target.value.replace(/\D/g,'').slice(0,8))} onKeyDown={event=>{if(event.key==='Enter')void unlock()}}/></label>{unlockError&&<div className="profile-error">{unlockError}</div>}<button className="primary modal-submit" onClick={()=>void unlock()}><Lock/>Déverrouiller</button></div></div>}
   </div>;
@@ -276,7 +277,8 @@ function App() {
   if(booting)return <BootScreen/>;
   const availableProfiles=[...profiles.map(base=>savedProfiles.find(saved=>saved.id===base.id)??base),...savedProfiles.filter(saved=>!profiles.some(base=>base.id===saved.id))];
   const upsertProfile=(saved:Profile)=>setSavedProfiles(current=>current.some(item=>item.id===saved.id)?current.map(item=>item.id===saved.id?saved:item):[...current,saved]);
-  if(!profile)return <ProfileGate availableProfiles={availableProfiles} onSaved={upsertProfile} onSelect={p=>{localStorage.setItem('sceneroot-profile',JSON.stringify(p));setProfile(p)}}/>;
+  const removeProfile=(deleted:Profile)=>{setSavedProfiles(current=>current.filter(item=>item.id!==deleted.id));if(profile?.id===deleted.id){localStorage.removeItem('sceneroot-profile');setProfile(null)}};
+  if(!profile)return <ProfileGate availableProfiles={availableProfiles} onSaved={upsertProfile} onDeleted={removeProfile} onSelect={p=>{localStorage.setItem('sceneroot-profile',JSON.stringify(p));setProfile(p)}}/>;
   const switchProfile=()=>{localStorage.removeItem('sceneroot-profile');setProfile(null)};
   return <Routes><Route path="/player/:id" element={<PlayerPage profile={profile}/>}/><Route path="/rate/:id" element={<RatingPage profile={profile}/>}/><Route path="/title/:id" element={<Shell profile={profile} onSwitchProfile={switchProfile}><DetailPage profile={profile}/></Shell>}/><Route path="*" element={<Shell profile={profile} onSwitchProfile={switchProfile}><Routes>
     <Route path="/" element={<HomePage profile={profile}/>}/><Route path="/films" element={<BrowsePage kind="film" title="Films"/>}/><Route path="/series" element={<BrowsePage kind="serie" title="Séries"/>}/><Route path="/discover" element={<BrowsePage title="Découvrir"/>}/><Route path="/tonight" element={<TonightPage availableProfiles={availableProfiles}/>}/><Route path="/library" element={<LibraryPage/>}/><Route path="/downloads" element={<DownloadsPage/>}/><Route path="/roots" element={<RootsPage profile={profile}/>}/><Route path="/search" element={<SearchPage/>}/><Route path="/settings" element={<SettingsPage/>}/>

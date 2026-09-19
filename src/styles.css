@@ -199,6 +199,8 @@ section { margin: 0 0 13px; }
 .pin-field input { padding-left: 42px; }
 .remove-pin { display: flex; align-items: center; gap: 8px; padding: 9px 12px; color: #ffb1b8; background: rgba(91,20,28,.28); border: 1px solid #733a43; border-radius: 8px; }
 .remove-pin.selected { color: white; background: rgba(150,32,45,.55); border-color: #f46d7d; }
+.remove-profile { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 10px; padding: 10px 12px; width: 100%; color: #ffb1b8; background: transparent; border: 1px solid #733a43; border-radius: 8px; }
+.remove-profile:hover { background: rgba(150,32,45,.35); color: #fff; }
 .remove-pin svg { width: 18px; }
 .profile-error { margin: 10px 0; padding: 9px 12px; color: #ffc3c8; background: rgba(112,24,34,.42); border: 1px solid #8a414b; border-radius: 8px; }
 .unlock-modal { text-align: center; }
