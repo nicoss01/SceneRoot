@@ -26,6 +26,11 @@ git clone https://github.com/VOTRE_COMPTE/SceneRoot.git
 cd SceneRoot
 SCENEROOT_REPO_URL=https://github.com/VOTRE_COMPTE/SceneRoot.git bash scripts/install.sh
 ```
+ou plus rapidement :
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nicoss01/SceneRoot/main/scripts/install.sh | SCENEROOT_REPO_URL=https://github.com/nicoss01/SceneRoot.git bash
+```
 
 Le serveur, le pont HDMI-CEC et l’interface TV se lancent au démarrage via `systemd`. Par défaut, `sceneroot-kiosk.service` démarre directement Cage et Chromium sur `tty1`, sans GNOME ni bureau Ubuntu. Le timer `sceneroot-update.timer` vérifie `origin/main` chaque jour et ne redémarre l’application que si une nouvelle révision existe.
 
