@@ -68,6 +68,7 @@ CFG_TMDB="${TMDB_API_KEY:-}"
 CFG_TOKEN="${SCENEROOT_ADMIN_TOKEN:-}"
 CFG_KIOSK_MODE="${SCENEROOT_KIOSK_MODE:-direct}"
 CFG_TV_SCALE="${SCENEROOT_TV_SCALE:-auto}"
+CFG_TRANSMISSION="${TRANSMISSION_RPC_URL:-http://127.0.0.1:9091/transmission/rpc}"
 
 if [[ "$USE_TUI" == 1 ]]; then
   CFG_MEDIA=$(whiptail --title "SceneRoot" --inputbox "Dossier(s) média à indexer (séparés par des virgules) :" 10 70 "$CFG_MEDIA" 3>&1 1>&2 2>&3) || die "Installation annulée."
@@ -139,12 +140,21 @@ sudo chown -R "$USER":"$USER" /var/lib/sceneroot
   echo "SCENEROOT_MEDIA=$CFG_MEDIA"
   echo "SCENEROOT_KIOSK_MODE=$CFG_KIOSK_MODE"
   echo "SCENEROOT_TV_SCALE=$CFG_TV_SCALE"
+  echo "TRANSMISSION_RPC_URL=$CFG_TRANSMISSION"
   [[ -n "$CFG_TMDB" ]]  && echo "TMDB_API_KEY=$CFG_TMDB"
   [[ -n "$CFG_TOKEN" ]] && echo "SCENEROOT_ADMIN_TOKEN=$CFG_TOKEN"
   true  # garantit un code de sortie 0 du bloc (sinon set -e+pipefail tue le script)
 } | sudo tee "$ENV_FILE" >/dev/null
 sudo chmod 600 "$ENV_FILE"
 ok "Configuration enregistrée"
+# Transmission : démon actif et dossier de téléchargement accessible en écriture
+DOWNLOAD_DIR="${CFG_MEDIA%%,*}/downloads"
+sudo mkdir -p "$DOWNLOAD_DIR"
+if getent passwd debian-transmission >/dev/null; then
+  sudo chown -R debian-transmission:debian-transmission "$DOWNLOAD_DIR"
+  sudo chmod 775 "$DOWNLOAD_DIR"
+fi
+sudo systemctl enable --now transmission-daemon >/dev/null 2>&1 && ok "Transmission actif ($CFG_TRANSMISSION)" || warn "Transmission n'a pas pu démarrer : les téléchargements seront indisponibles."
 
 # ── Étape 7 : services systemd ───────────────────────────────────────────────
 step "Services systemd"
