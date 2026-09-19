@@ -173,8 +173,23 @@ if [[ "$CFG_KIOSK_MODE" == "direct" ]]; then
     sudo sed -i 's/[[:space:]]*$/ video=HDMI-A-1:1920x1080M@60/' "$CMDLINE" && ok "Sortie HDMI forcée en 1080p"
   fi
   sudo sed -i '/^SCENEROOT_TV_SCALE=/d' "$ENV_FILE"; echo 'SCENEROOT_TV_SCALE=1' | sudo tee -a "$ENV_FILE" >/dev/null
-  run "Activation du kiosque direct sur tty1" sudo systemctl enable sceneroot-kiosk.service
-  ok "Cage et Chromium démarreront directement sur la TV au prochain redémarrage"
+  # Lancement fiable : autologin sur tty1 + Cage depuis le shell (le service systemd
+  # n'obtient pas de seat actif ; une session de login interactive, si).
+  sudo systemctl disable sceneroot-kiosk.service >/dev/null 2>&1 || true
+  sudo mkdir -p /etc/systemd/system/getty@tty1.service.d
+  printf '[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin %s --noclear %%I $TERM\n' "$USER" | sudo tee /etc/systemd/system/getty@tty1.service.d/sceneroot-autologin.conf >/dev/null
+  sudo systemctl enable getty@tty1.service >/dev/null 2>&1 || true
+  if ! grep -q 'SceneRoot kiosk' "$HOME/.bash_profile" 2>/dev/null; then
+    cat >> "$HOME/.bash_profile" <<'PROFILE'
+
+# SceneRoot kiosk — interface TV sur tty1
+if [[ -z "${WAYLAND_DISPLAY:-}" && "${XDG_VTNR:-}" == "1" ]]; then
+  while true; do cage -- /opt/sceneroot/scripts/kiosk.sh; echo "SceneRoot : kiosque arrêté, relance dans 3 s (Ctrl+C pour un shell)"; sleep 3; done
+fi
+PROFILE
+  fi
+  run "Rechargement de systemd" sudo systemctl daemon-reload
+  ok "Autologin + Cage configurés sur tty1 — l'interface s'affichera au prochain redémarrage"
 else
   sudo systemctl disable sceneroot-kiosk.service >/dev/null 2>&1 || true
   install -Dm755 scripts/kiosk.sh "$HOME/.local/bin/sceneroot-kiosk"
