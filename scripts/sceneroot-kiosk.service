@@ -18,6 +18,8 @@ RuntimeDirectory=sceneroot-kiosk
 RuntimeDirectoryMode=0700
 Environment=XDG_RUNTIME_DIR=/run/sceneroot-kiosk
 Environment=WAYLAND_DISPLAY=wayland-0
+Environment=XDG_SEAT=seat0
+Environment=LIBSEAT_BACKEND=seatd
 EnvironmentFile=-/etc/sceneroot.env
 TTYReset=yes
 TTYVHangup=yes
