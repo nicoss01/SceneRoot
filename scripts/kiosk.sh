@@ -1,5 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
+# Le kiosque peut être lancé depuis un shell de login (autologin tty1), qui ne
+# lit pas EnvironmentFile= : on charge la configuration nous-mêmes.
+if [[ -r /etc/sceneroot.env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  . /etc/sceneroot.env || true
+  set +a
+fi
+
 URL="${SCENEROOT_URL:-http://127.0.0.1:4174}"
 until curl --silent --fail "$URL/api/health" >/dev/null; do sleep 2; done
 
@@ -18,7 +28,10 @@ detect_tv_scale() {
   echo 1
 }
 
-TV_SCALE="${SCENEROOT_TV_SCALE:-auto}"
+# Échelle 1 par défaut : une échelle > 1 fait soumettre à Chromium/Wayland un
+# tampon à la taille logique, affiché au quart de l'écran sur une sortie 4K.
+# La lisibilité vient de la sortie forcée en 1080p, pas d'un facteur d'échelle.
+TV_SCALE="${SCENEROOT_TV_SCALE:-1}"
 [[ "$TV_SCALE" == "auto" ]] && TV_SCALE="$(detect_tv_scale)"
 
 if command -v chromium >/dev/null 2>&1; then
