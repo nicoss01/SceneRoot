@@ -20,6 +20,7 @@ import { formatBytes } from './lib/format';
 import { matchesDuration, matchesSearchFilters, type DurationBucket } from './lib/filters';
 import { DownloadPanel } from './components/DownloadPanel';
 import { QRCode } from './components/QRCode';
+import { SetupWizard } from './components/SetupWizard';
 import { useDownloads } from './hooks/useDownloads';
 import type { MediaItem, PlayerStatus, Profile } from './types';
 
@@ -301,12 +302,17 @@ function Setting({label,value,setValue}:{label:string;value:boolean;setValue?:(v
 function App() {
   const [booting,setBooting]=useState(true);
   const [savedProfiles,setSavedProfiles]=useState<Profile[]>([]);
+  const [setupComplete,setSetupComplete]=useState<boolean|null>(null);
   const [profile,setProfile]=useState<Profile|null>(()=>{try{return JSON.parse(localStorage.getItem('sceneroot-profile')||'null')}catch{return null}});
+  const refetchProfiles=useCallback(()=>fetch('/api/profiles').then(response=>response.ok?response.json():[]).then((items:Profile[])=>setSavedProfiles(items)).catch(()=>{}),[]);
   useEffect(()=>{const timer=setTimeout(()=>setBooting(false),1450);return()=>clearTimeout(timer)},[]);
-  useEffect(()=>{fetch('/api/profiles').then(response=>response.ok?response.json():[]).then((items:Profile[])=>setSavedProfiles(items)).catch(()=>{})},[]);
+  useEffect(()=>{void refetchProfiles()},[refetchProfiles]);
+  useEffect(()=>{fetch('/api/settings').then(response=>response.ok?response.json():null).then((data:{setupComplete?:boolean}|null)=>setSetupComplete(Boolean(data?.setupComplete))).catch(()=>setSetupComplete(false))},[]);
   useEffect(()=>{ const handle=(e:KeyboardEvent)=>{ if(!['ArrowRight','ArrowLeft','ArrowUp','ArrowDown'].includes(e.key))return; const els=[...document.querySelectorAll<HTMLElement>('button:not([disabled]),a[href],input,select')].filter(x=>x.offsetParent!==null); const current=document.activeElement as HTMLElement; const r=current?.getBoundingClientRect(); if(!r){els[0]?.focus();return} const horizontal=e.key==='ArrowLeft'||e.key==='ArrowRight'; const sign=e.key==='ArrowLeft'||e.key==='ArrowUp'?-1:1; let best:HTMLElement|undefined,score=Infinity; for(const el of els){if(el===current)continue;const q=el.getBoundingClientRect();const dx=q.left+q.width/2-(r.left+r.width/2),dy=q.top+q.height/2-(r.top+r.height/2);const primary=horizontal?dx:dy;if(Math.sign(primary)!==sign)continue;const secondary=horizontal?dy:dx;const s=Math.abs(primary)+Math.abs(secondary)*2;if(s<score){score=s;best=el}} if(best){e.preventDefault();best.focus()}}; addEventListener('keydown',handle); return()=>removeEventListener('keydown',handle)},[]);
-  if(booting)return <BootScreen/>;
-  const availableProfiles=[...profiles.map(base=>savedProfiles.find(saved=>saved.id===base.id)??base),...savedProfiles.filter(saved=>!profiles.some(base=>base.id===saved.id))];
+  if(booting||setupComplete===null)return <BootScreen/>;
+  const needsSetup=!setupComplete&&savedProfiles.length===0;
+  if(needsSetup&&!profile)return <SetupWizard onDone={created=>{setSetupComplete(true);if(created.length)setSavedProfiles(current=>[...current,...created.filter(item=>!current.some(existing=>existing.id===item.id))]);void refetchProfiles()}}/>;
+  const availableProfiles=setupComplete?savedProfiles:[...profiles.map(base=>savedProfiles.find(saved=>saved.id===base.id)??base),...savedProfiles.filter(saved=>!profiles.some(base=>base.id===saved.id))];
   const upsertProfile=(saved:Profile)=>setSavedProfiles(current=>current.some(item=>item.id===saved.id)?current.map(item=>item.id===saved.id?saved:item):[...current,saved]);
   const removeProfile=(deleted:Profile)=>{setSavedProfiles(current=>current.filter(item=>item.id!==deleted.id));if(profile?.id===deleted.id){localStorage.removeItem('sceneroot-profile');setProfile(null)}};
   if(!profile)return <ProfileGate availableProfiles={availableProfiles} onSaved={upsertProfile} onDeleted={removeProfile} onSelect={p=>{localStorage.setItem('sceneroot-profile',JSON.stringify(p));setProfile(p)}}/>;
