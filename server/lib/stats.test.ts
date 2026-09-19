@@ -51,7 +51,7 @@ describe('computeStats', () => {
     }), new Date('2024-06-15T00:00:00Z'));
     const sf = stats.genreTimeline.find(branch => branch.genre === 'Science-fiction');
     expect(sf?.total).toBe(2); // a (Feb) + b (Jun)
-    expect(sf?.months).toEqual([0, 1, 0, 0, 1, 0]); // Jan..Jun window
+    expect(sf?.months).toEqual([0, 1, 0, 0, 0, 1]); // Jan..Jun window (Feb=1, Jun=5)
   });
 
   it('returns null average with no ratings', () => {
