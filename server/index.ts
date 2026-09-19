@@ -103,7 +103,16 @@ function comparableTitle(value:string){return value.normalize('NFD').replace(/[\
 function groupLibrary(library:LibraryItem[]):LibraryGroup[]{const grouped=new Map<string,LibraryGroup>();for(const {path,...item} of library){const title=item.metadata?.title??item.title;const year=Number(item.metadata?.releaseDate?.slice(0,4))||item.year;const key=`${item.kind}:${comparableTitle(title)}:${year??''}`;const group=grouped.get(key)??{id:item.id,title,year,kind:item.kind,metadata:item.metadata,versions:[],totalSize:0,episodeCount:0};group.versions.push(item);group.totalSize+=item.size;if(item.episode)group.episodeCount++;grouped.set(key,group)}return[...grouped.values()]}
 function groupForMedia(groups:LibraryGroup[],mediaId:string){return groups.find(group=>group.id===mediaId||group.versions.some(version=>version.id===mediaId))}
 let enrichmentRunning=false;
-async function enrichLibrary(limit=6){if(enrichmentRunning)return;enrichmentRunning=true;try{const db=loadDb();const pending=db.library.filter(item=>!item.metadata).slice(0,limit);let changed=false;for(const item of pending){try{const result=await searchMetadata(item.title,item.kind,item.year?String(item.year):undefined);const exact=result.items.filter(candidate=>comparableTitle(candidate.title)===comparableTitle(item.title)&&(!item.year||!candidate.releaseDate||Number(candidate.releaseDate.slice(0,4))===item.year));if(exact.length!==1)continue;const selected=exact[0];for(const sibling of db.library.filter(entry=>entry.kind===item.kind&&comparableTitle(entry.title)===comparableTitle(item.title))){sibling.metadata=selected;sibling.title=selected.title}changed=true}catch(error){app.log.warn({error,title:item.title},'Automatic metadata enrichment failed')}}if(changed)saveDb(db)}finally{enrichmentRunning=false}}
+async function enrichLibrary(limit=6){if(enrichmentRunning)return;enrichmentRunning=true;try{
+  const pending=loadDb().library.filter(item=>!item.metadata).slice(0,limit);
+  const decisions:Array<{kind:'film'|'serie';title:string;metadata:MediaMetadata}>=[];
+  for(const item of pending){try{const result=await searchMetadata(item.title,item.kind,item.year?String(item.year):undefined);const exact=result.items.filter(candidate=>comparableTitle(candidate.title)===comparableTitle(item.title)&&(!item.year||!candidate.releaseDate||Number(candidate.releaseDate.slice(0,4))===item.year));if(exact.length!==1)continue;decisions.push({kind:item.kind,title:item.title,metadata:exact[0]})}catch(error){app.log.warn({error,title:item.title},'Automatic metadata enrichment failed')}}
+  if(!decisions.length)return;
+  // Re-read just before writing so ratings/playback saved during the awaits above are not overwritten.
+  const db=loadDb();let changed=false;
+  for(const decision of decisions){for(const sibling of db.library.filter(entry=>!entry.metadata&&entry.kind===decision.kind&&comparableTitle(entry.title)===comparableTitle(decision.title))){sibling.metadata=decision.metadata;sibling.title=decision.metadata.title;changed=true}}
+  if(changed)saveDb(db);
+}finally{enrichmentRunning=false}}
 function slug(path: string) { let h=2166136261; for(const c of path) h=Math.imul(h^c.charCodeAt(0),16777619); return (h>>>0).toString(36); }
 function titleFromFile(file: string) {
   const raw = parse(file).name.replace(/[._]/g,' ').replace(/\b(?:s\d{1,2}e\d{1,3}|\d{1,2}x\d{1,3}|season\s*\d+\s*episode\s*\d+)\b.*$/i,'').replace(/\b(19|20)\d{2}\b.*$/,'').replace(/\b(1080p|2160p|720p|bluray|webrip|web-dl).*$/i,'');
@@ -119,7 +128,8 @@ async function scanLibrary() {
   const files=(await Promise.all(mediaRoots.map(walk))).flat();
   const db=loadDb();const previous=new Map(db.library.map(item=>[item.path,item]));
   const library: LibraryItem[]=[]; for(const path of files){const info=statSync(path);const old=previous.get(path);const match=parse(path).name.match(/\b((?:19|20)\d{2})\b/);const ep=episodeFromFile(path);const unchanged=old&&old.size===info.size&&old.modifiedAt===info.mtime.toISOString();library.push({id:slug(path),title:old?.metadata?.title??titleFromFile(path),path,kind:ep?'serie':'film',year:match?Number(match[1]):old?.year,...(ep??{}),size:info.size,modifiedAt:info.mtime.toISOString(),addedAt:info.birthtime.toISOString(),technical:unchanged?old.technical:await probe(path),metadata:old?.metadata})}
-  db.library=library;saveDb(db);void enrichLibrary(6);return library;
+  // Re-read just before writing so ratings/playback saved during the probe awaits are preserved.
+  const fresh=loadDb();fresh.library=library;saveDb(fresh);void enrichLibrary(6);return library;
 }
 
 const allowedOrigins=parseAllowedOrigins(process.env.SCENEROOT_ALLOWED_ORIGINS);
