@@ -46,6 +46,7 @@ describe('requiresAdmin', () => {
     expect(requiresAdmin('POST', '/api/library/scan')).toBe(true);
     expect(requiresAdmin('POST', '/api/downloads')).toBe(true);
     expect(requiresAdmin('POST', '/api/downloads/7/control')).toBe(true);
+    expect(requiresAdmin('POST', '/api/downloads/7/play')).toBe(true);
     expect(requiresAdmin('POST', '/api/cec/standby')).toBe(true);
     expect(requiresAdmin('POST', '/api/player/abc/play')).toBe(true);
     expect(requiresAdmin('POST', '/api/player/control')).toBe(true);

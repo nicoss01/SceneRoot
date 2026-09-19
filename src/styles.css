@@ -301,6 +301,15 @@ section { margin: 0 0 13px; }
 .controls-row button:disabled { opacity: .45; }
 .controls-spacer { flex: 1; }
 .player-note { display: block; margin-top: 6px; color: #9fb6cf; font-size: 12px; }
+.stream-buffering { display: flex; align-items: center; justify-content: center; }
+.buffering-card { text-align: center; max-width: 460px; display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 32px; background: rgba(3,15,27,.7); border: 1px solid #23405c; border-radius: 16px; }
+.buffering-card h1 { margin: 0; font-size: 26px; }
+.buffering-card p { margin: 0; color: #b3c4d8; }
+.buffering-card small { color: #8fa6c0; font-size: 12px; }
+.buffering-spinner { width: 46px; height: 46px; border-radius: 50%; border: 4px solid #1c3450; border-top-color: var(--cyan); animation: spin 1s linear infinite; }
+.buffering-bar { width: 100%; height: 8px; background: #122a40; border-radius: 6px; overflow: hidden; }
+.buffering-bar i { display: block; height: 100%; background: var(--cyan); transition: width .4s; }
+.buffering-card .controls-row { margin-top: 8px; }
 .episodes { margin-top: 26px; max-width: 640px; }
 .season { margin-bottom: 18px; }
 .season h3 { color: #cfe0f2; font-size: 14px; margin-bottom: 10px; }

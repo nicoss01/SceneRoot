@@ -41,7 +41,7 @@ export function requiresAdmin(method: string, url: string): boolean {
     || path === '/api/library/enrich'
     || path === '/api/cec' || path.startsWith('/api/cec/')
     || path === '/api/downloads'
-    || /^\/api\/downloads\/[^/]+\/control$/.test(path)
+    || /^\/api\/downloads\/[^/]+\/(control|play)$/.test(path)
     || path === '/api/sources'
     || path.startsWith('/api/player/');
 }

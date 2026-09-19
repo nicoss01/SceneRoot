@@ -7,7 +7,7 @@ import type { MediaItem } from '../types';
 type SourceResult = { source: string; title: string; link?: string; size: number; seeders: number; published?: string };
 type RankedResult = SourceResult & { id: string; quality: string; languages: string[]; hdr: boolean; codec?: string; compatibilityScore: number };
 
-export function DownloadPanel({ item, onClose, priority = false, onQueued }: { item: MediaItem; onClose: () => void; priority?: boolean; onQueued?: () => void }) {
+export function DownloadPanel({ item, onClose, priority = false, onQueued }: { item: MediaItem; onClose: () => void; priority?: boolean; onQueued?: (torrentId?: number) => void }) {
   const [results, setResults] = useState<RankedResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -55,7 +55,7 @@ export function DownloadPanel({ item, onClose, priority = false, onQueued }: { i
         await fetch(`/api/downloads/${torrentId}/control`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'queue-top' }) }).catch(() => {});
       }
       setLaunched(result.id);
-      onQueued?.();
+      onQueued?.(typeof torrentId === 'number' ? torrentId : undefined);
     } catch (cause) { setLaunchError((cause as Error).message); } finally { setLaunching(null); }
   };
 
