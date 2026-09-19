@@ -13,6 +13,7 @@ import { allGenres } from './data/genres';
 import { useCatalog } from './hooks/useCatalog';
 import { useLibrary } from './hooks/useLibrary';
 import { useHistory, useResume } from './hooks/usePlaybackHistory';
+import { useLibraryGroup } from './hooks/useLibraryGroup';
 import type { MediaItem, PlayerStatus, Profile } from './types';
 
 function formatTime(seconds: number) {
@@ -163,13 +164,20 @@ function matchesDuration(item:MediaItem,duration:'short'|'medium'|'any'){if(dura
 function selectedProfileNames(ids:string[],availableProfiles:Profile[]){const names=ids.map(id=>availableProfiles.find(profile=>profile.id===id)?.name).filter(Boolean);return names.length?`${names.join(', ')} sont pris en compte`:'sélection familiale neutre'}
 function FilterGroup({title,children}:{title:string;children:React.ReactNode}){return <div className="filter-group"><strong>{title}</strong><div>{children}</div></div>}
 
-function DetailPage() {
+function DetailPage({profile}:{profile:Profile}) {
   const { id } = useParams(); const navigate = useNavigate(); const item = resolveMedia(id);
+  const isLocalSeries=Boolean(item.local)&&item.kind==='serie';
+  const {seasons,detail}=useLibraryGroup(id,profile.id,isLocalSeries);
+  const nextId=detail?.nextEpisodeId; const playTarget=nextId??item.id;
+  const nextEpisode=seasons.flatMap(season=>season.episodes.map(episode=>({...episode,season:season.season}))).find(episode=>episode.id===nextId);
+  const nextStarted=nextEpisode?(nextEpisode.progress>0.02&&nextEpisode.progress<0.9):Boolean(item.progress);
+  const playLabel=isLocalSeries?(nextEpisode?`${nextStarted?'Reprendre':'Lire'} S${nextEpisode.season}E${String(nextEpisode.episode).padStart(2,'0')}`:'Lire'):(item.progress?'Reprendre':'Lire');
   return <div className="detail" style={{ '--a': item.palette[0], '--b': item.palette[1], backgroundImage:`linear-gradient(90deg,rgba(1,7,14,.94) 8%,rgba(1,7,14,.28)), url('${item.art??'/assets/sceneroot-landscape.png'}')` } as React.CSSProperties}>
     <button className="back focusable" onClick={()=>navigate(-1)}><ArrowLeft/> Retour</button>
     <div className="detail__symbol">{item.symbol}<i/></div><div className="detail__content"><span className="eyebrow">{item.kind === 'film' ? 'FILM' : 'SÉRIE'} · {item.year}</span><h1>{item.title}</h1>
     <div className="detail__meta"><Star fill="currentColor"/> {item.rating>0?`${item.rating}/10`:'Non noté'} <span>{item.duration}</span><span>{item.quality}</span></div><p>{item.description}</p><div className="detail__genres">{item.genres.map(g=><span key={g}>{g}</span>)}</div>{item.sourceUrl&&<a className="source-link" href={item.sourceUrl} target="_blank" rel="noreferrer">Informations : {item.informationSource??(item.source==='tvmaze'?'TVmaze':item.source==='wikipedia'?'Wikipédia':'TMDB')}</a>}
-    <div className="actions"><button className="primary focusable" onClick={()=>navigate(`/player/${item.id}`)}><Play fill="currentColor"/> {item.progress ? 'Reprendre' : 'Lire'}</button><button className="secondary focusable"><Download/> Télécharger</button><button className="icon-btn focusable"><Heart/></button></div></div>
+    <div className="actions"><button className="primary focusable" onClick={()=>navigate(`/player/${playTarget}`)}><Play fill="currentColor"/> {playLabel}</button><button className="secondary focusable"><Download/> Télécharger</button><button className="icon-btn focusable"><Heart/></button></div>
+    {isLocalSeries&&seasons.length>0&&<div className="episodes">{seasons.map(season=><div className="season" key={season.season}><h3>Saison {season.season} · {season.episodes.length} épisode{season.episodes.length>1?'s':''}</h3><div className="episode-list">{season.episodes.map(episode=><button className={`episode focusable ${episode.id===nextId?'is-next':''}`} key={episode.id} onClick={()=>navigate(`/player/${episode.id}`)}><span className="episode-num">E{String(episode.episode).padStart(2,'0')}</span><span className="episode-title">{episode.title}{episode.id===nextId&&<em> · à suivre</em>}</span><Play size={16} fill="currentColor"/>{episode.progress>0.02&&<i className="episode-progress" style={{width:`${Math.min(100,Math.round(episode.progress*100))}%`}}/>}</button>)}</div></div>)}</div>}</div>
   </div>;
 }
 
@@ -249,7 +257,7 @@ function App() {
   const upsertProfile=(saved:Profile)=>setSavedProfiles(current=>current.some(item=>item.id===saved.id)?current.map(item=>item.id===saved.id?saved:item):[...current,saved]);
   if(!profile)return <ProfileGate availableProfiles={availableProfiles} onSaved={upsertProfile} onSelect={p=>{localStorage.setItem('sceneroot-profile',JSON.stringify(p));setProfile(p)}}/>;
   const switchProfile=()=>{localStorage.removeItem('sceneroot-profile');setProfile(null)};
-  return <Routes><Route path="/player/:id" element={<PlayerPage profile={profile}/>}/><Route path="/rate/:id" element={<RatingPage profile={profile}/>}/><Route path="/title/:id" element={<Shell profile={profile} onSwitchProfile={switchProfile}><DetailPage/></Shell>}/><Route path="*" element={<Shell profile={profile} onSwitchProfile={switchProfile}><Routes>
+  return <Routes><Route path="/player/:id" element={<PlayerPage profile={profile}/>}/><Route path="/rate/:id" element={<RatingPage profile={profile}/>}/><Route path="/title/:id" element={<Shell profile={profile} onSwitchProfile={switchProfile}><DetailPage profile={profile}/></Shell>}/><Route path="*" element={<Shell profile={profile} onSwitchProfile={switchProfile}><Routes>
     <Route path="/" element={<HomePage profile={profile}/>}/><Route path="/films" element={<BrowsePage kind="film" title="Films"/>}/><Route path="/series" element={<BrowsePage kind="serie" title="Séries"/>}/><Route path="/discover" element={<BrowsePage title="Découvrir"/>}/><Route path="/tonight" element={<TonightPage availableProfiles={availableProfiles}/>}/><Route path="/library" element={<LibraryPage/>}/><Route path="/roots" element={<RootsPage profile={profile}/>}/><Route path="/search" element={<SearchPage/>}/><Route path="/settings" element={<SettingsPage/>}/>
   </Routes></Shell>}/></Routes>;
 }
