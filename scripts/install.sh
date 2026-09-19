@@ -167,6 +167,12 @@ if [[ "$CFG_KIOSK_MODE" == "direct" ]]; then
   rm -f "$HOME/.config/autostart/sceneroot-kiosk.desktop"
   sudo systemctl disable display-manager.service >/dev/null 2>&1 || true
   sudo systemctl set-default multi-user.target >/dev/null
+  # Sortie forcée en 1080p : affichage plein écran fiable et composition légère sur TV 4K.
+  CMDLINE=/boot/firmware/cmdline.txt; [[ -f $CMDLINE ]] || CMDLINE=/boot/cmdline.txt
+  if [[ -f $CMDLINE ]] && ! grep -q 'video=HDMI' "$CMDLINE"; then
+    sudo sed -i 's/[[:space:]]*$/ video=HDMI-A-1:1920x1080M@60/' "$CMDLINE" && ok "Sortie HDMI forcée en 1080p"
+  fi
+  sudo sed -i '/^SCENEROOT_TV_SCALE=/d' "$ENV_FILE"; echo 'SCENEROOT_TV_SCALE=1' | sudo tee -a "$ENV_FILE" >/dev/null
   run "Activation du kiosque direct sur tty1" sudo systemctl enable sceneroot-kiosk.service
   ok "Cage et Chromium démarreront directement sur la TV au prochain redémarrage"
 else
