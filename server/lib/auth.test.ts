@@ -49,11 +49,14 @@ describe('requiresAdmin', () => {
     expect(requiresAdmin('POST', '/api/cec/standby')).toBe(true);
     expect(requiresAdmin('POST', '/api/player/abc/play')).toBe(true);
     expect(requiresAdmin('POST', '/api/player/control')).toBe(true);
+    expect(requiresAdmin('DELETE', '/api/cache')).toBe(true);
   });
   it('leaves read and compute routes open', () => {
     expect(requiresAdmin('GET', '/api/library')).toBe(false);
     expect(requiresAdmin('POST', '/api/downloads/rank')).toBe(false);
     expect(requiresAdmin('POST', '/api/ratings')).toBe(false);
     expect(requiresAdmin('GET', '/api/downloads')).toBe(false);
+    expect(requiresAdmin('GET', '/api/cache')).toBe(false);
+    expect(requiresAdmin('DELETE', '/api/profiles/1')).toBe(false);
   });
 });

@@ -24,8 +24,9 @@ export function isAdminAuthorized(remoteAddress: string | undefined, token: stri
 }
 
 export function requiresAdmin(method: string, url: string): boolean {
-  if (method !== 'POST') return false;
   const path = url.split('?')[0];
+  if (method === 'DELETE') return path === '/api/cache';
+  if (method !== 'POST') return false;
   if (path === '/api/downloads/rank') return false;
   return path === '/api/library/scan'
     || path === '/api/library/enrich'
