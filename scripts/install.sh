@@ -97,9 +97,11 @@ fi
 # ── Étape 4 : récupération du code ───────────────────────────────────────────
 step "Récupération de SceneRoot"
 if [[ -d "$APP_DIR/.git" ]]; then
+  sudo git -C "$APP_DIR" config core.fileMode false
   run "Mise à jour du dépôt" sudo git -C "$APP_DIR" pull --ff-only
 else
   run "Clonage depuis $REPO_URL" sudo git clone --depth 1 "$REPO_URL" "$APP_DIR"
+  sudo git -C "$APP_DIR" config core.fileMode false
 fi
 sudo chown -R "$USER":"$USER" "$APP_DIR"
 cd "$APP_DIR"

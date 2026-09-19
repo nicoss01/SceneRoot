@@ -29,6 +29,14 @@ SCENEROOT_REPO_URL=https://github.com/VOTRE_COMPTE/SceneRoot.git bash scripts/in
 
 Le serveur se lance au démarrage via `systemd`. L’interface Chromium s’ouvre automatiquement en mode kiosque dès la session graphique disponible. Le timer `sceneroot-update.timer` vérifie `origin/main` chaque jour et ne redémarre l’application que si une nouvelle révision existe.
 
+Pour déclencher immédiatement la même mise à jour depuis le terminal :
+
+```bash
+sudo /opt/sceneroot/scripts/update.sh
+```
+
+Le script refuse d’écraser des modifications Git locales, sauvegarde `/var/lib/sceneroot` et `/etc/sceneroot.env` dans `/var/backups/sceneroot`, compile la nouvelle version, vérifie l’API puis restaure automatiquement l’ancienne révision si une étape échoue. Les profils, réglages, clés, historiques et catalogues SQLite restent séparés du dépôt Git.
+
 Le script installé utilise automatiquement :
 
 ```bash
