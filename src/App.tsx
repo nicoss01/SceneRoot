@@ -22,6 +22,7 @@ import { matchesDuration, matchesSearchFilters, type DurationBucket } from './li
 import { DownloadPanel } from './components/DownloadPanel';
 import { QRCode } from './components/QRCode';
 import { SetupWizard } from './components/SetupWizard';
+import { TasteTree } from './components/TasteTree';
 import { useDownloads } from './hooks/useDownloads';
 import type { MediaItem, PlayerStatus, Profile } from './types';
 
@@ -268,7 +269,7 @@ function RatingPage({profile}:{profile:Profile}) {
 }
 
 type RootsTab='all'|'film'|'serie'|'rated'|'stats';
-type ProfileStats={watched:number;rated:number;averageRating:number|null;films:number;series:number;topGenres:{genre:string;count:number}[];topTags:{tag:string;count:number}[];activity:{month:string;count:number}[]};
+type ProfileStats={watched:number;rated:number;averageRating:number|null;films:number;series:number;topGenres:{genre:string;count:number}[];topTags:{tag:string;count:number}[];activity:{month:string;count:number}[];genreTimeline:{genre:string;total:number;months:number[]}[]};
 const monthLabels=['Jan','Fév','Mar','Avr','Mai','Juin','Juil','Août','Sep','Oct','Nov','Déc'];
 function RootsStats({profile}:{profile:Profile}){
   const [stats,setStats]=useState<ProfileStats|null>(null);const [loading,setLoading]=useState(true);
@@ -283,6 +284,7 @@ function RootsStats({profile}:{profile:Profile}){
       <div className="stat-card"><h3><BarChart3/>Activité (6 mois)</h3><div className="stat-months">{stats.activity.map(month=>{const m=Number(month.month.slice(5,7))-1;return <div className="stat-month" key={month.month}><i style={{height:`${Math.max(4,month.count/maxMonth*100)}%`}} title={`${month.count} vu(s)`}/><span>{monthLabels[m]??''}</span></div>})}</div></div>
     </div>
     {stats.topTags.length>0&&<div className="stat-card"><h3><Heart/>Ressentis</h3><div className="stat-tags">{stats.topTags.map(tag=><span key={tag.tag}>{tag.tag} · {tag.count}</span>)}</div></div>}
+    {stats.genreTimeline.some(branch=>branch.total>0)&&<div className="stat-card"><h3><Sparkles/>Évolution de vos goûts</h3><TasteTree branches={stats.genreTimeline}/></div>}
   </div>;
 }
 function RootsPage({profile}:{profile:Profile}) {

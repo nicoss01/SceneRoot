@@ -42,6 +42,18 @@ describe('computeStats', () => {
     expect(stats.activity[0].month).toBe('2024-01');
   });
 
+  it('builds a per-genre monthly timeline for the taste tree', () => {
+    const stats = computeStats(deps({
+      playback: [
+        { mediaId: 'a', progress: 1, updatedAt: '2024-02-05T00:00:00Z' },
+        { mediaId: 'b', progress: 1, updatedAt: '2024-06-05T00:00:00Z' },
+      ],
+    }), new Date('2024-06-15T00:00:00Z'));
+    const sf = stats.genreTimeline.find(branch => branch.genre === 'Science-fiction');
+    expect(sf?.total).toBe(2); // a (Feb) + b (Jun)
+    expect(sf?.months).toEqual([0, 1, 0, 0, 1, 0]); // Jan..Jun window
+  });
+
   it('returns null average with no ratings', () => {
     expect(computeStats(deps()).averageRating).toBeNull();
   });

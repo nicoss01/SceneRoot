@@ -477,6 +477,7 @@ section { margin: 0 0 13px; }
 .stat-tags { display: flex; flex-wrap: wrap; gap: 8px; }
 .stat-tags span { padding: 6px 11px; background: #12263c; border-radius: 999px; font-size: 13px; color: #cfe0f2; }
 .muted-note { color: #8fa6c0; }
+.taste-tree { width: 100%; height: auto; display: block; }
 @media (max-width: 720px) { .stat-panels { grid-template-columns: 1fr; } .stat-bar { grid-template-columns: 96px 1fr auto; } }
 .source-form { display: grid; gap: 8px; margin: 12px 0; }
 .source-form input { padding: 9px 11px; background: rgba(5,17,30,.8); border: 1px solid #23405c; border-radius: 8px; color: inherit; }

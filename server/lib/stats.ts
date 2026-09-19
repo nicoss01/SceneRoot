@@ -15,6 +15,7 @@ export type ProfileStats = {
   topGenres: Array<{ genre: string; count: number }>;
   topTags: Array<{ tag: string; count: number }>;
   activity: Array<{ month: string; count: number }>;
+  genreTimeline: Array<{ genre: string; total: number; months: number[] }>;
 };
 
 const COMPLETED = 0.92;
@@ -54,10 +55,20 @@ export function computeStats(deps: StatsDeps, now = new Date()): ProfileStats {
     months.push(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`);
   }
   const monthCounts = new Map(months.map(month => [month, 0]));
-  for (const timestamp of watchedAt.values()) {
+  const monthIndex = new Map(months.map((month, index) => [month, index]));
+  const genreMonths = new Map<string, number[]>();
+  for (const [mediaId, timestamp] of watchedAt) {
     const month = timestamp.slice(0, 7);
     if (monthCounts.has(month)) monthCounts.set(month, monthCounts.get(month)! + 1);
+    const index = monthIndex.get(month);
+    for (const genre of deps.genresOf(mediaId)) {
+      const series = genreMonths.get(genre) ?? months.map(() => 0);
+      if (index !== undefined) series[index]++;
+      genreMonths.set(genre, series);
+    }
   }
+  const topGenres = topEntries(genreCounts, 6).map(([genre, count]) => ({ genre, count }));
+  const genreTimeline = topGenres.slice(0, 5).map(({ genre, count }) => ({ genre, total: count, months: genreMonths.get(genre) ?? months.map(() => 0) }));
 
   return {
     watched: watchedAt.size,
@@ -65,8 +76,9 @@ export function computeStats(deps: StatsDeps, now = new Date()): ProfileStats {
     averageRating,
     films,
     series,
-    topGenres: topEntries(genreCounts, 6).map(([genre, count]) => ({ genre, count })),
+    topGenres,
     topTags: topEntries(tagCounts, 6).map(([tag, count]) => ({ tag, count })),
     activity: months.map(month => ({ month, count: monthCounts.get(month) ?? 0 })),
+    genreTimeline,
   };
 }
