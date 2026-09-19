@@ -12,6 +12,7 @@ import { recommendGroup } from './lib/recommend.js';
 import { rankDownloads, type RankCandidate, type RankPrefs } from './lib/rank.js';
 import { isAllowedOrigin, parseAllowedOrigins } from './lib/cors.js';
 import { atomicWriteJson, readJson } from './lib/jsonStore.js';
+import { bearerToken, isAdminAuthorized, requiresAdmin } from './lib/auth.js';
 
 type Rating = { profileId: string; mediaId: string; score: number; tags: string[]; at: string };
 type ProfileRecord = { id:string; name:string; ageLimit:number; avatar:string; accent:string; pinHash?:string; createdAt:string };
@@ -134,6 +135,11 @@ async function scanLibrary() {
 
 const allowedOrigins=parseAllowedOrigins(process.env.SCENEROOT_ALLOWED_ORIGINS);
 await app.register(cors, { origin:(origin,callback)=>callback(null,isAllowedOrigin(origin,allowedOrigins)) });
+app.addHook('onRequest',async(request,reply)=>{
+  if(!requiresAdmin(request.method,request.url))return;
+  const token=(request.headers['x-sceneroot-token'] as string|undefined)??bearerToken(request.headers.authorization);
+  if(!isAdminAuthorized(request.ip,token,process.env.SCENEROOT_ADMIN_TOKEN))return reply.code(401).send({error:'Administration réservée : accès distant refusé (token requis)'});
+});
 app.get('/api/health', async () => ({ ok:true, version:'0.1.0', mediaRoots }));
 app.get('/api/profiles',async()=>loadDb().profiles.map(({pinHash,...profile})=>({...profile,locked:Boolean(pinHash)})));
 app.post<{Body:{name:string;ageLimit:number;avatar?:string;accent?:string;pin?:string}}>('/api/profiles',{schema:{body:{type:'object',required:['name'],properties:{name:{type:'string',minLength:1,maxLength:40},ageLimit:{type:'number'},avatar:{type:'string'},accent:{type:'string'},pin:{type:'string',pattern:'^[0-9]{0,8}$'}}}}},async(request,reply)=>{const name=request.body.name?.trim();if(!name)return reply.code(400).send({error:'Le nom est obligatoire'});const db=loadDb();const profile:ProfileRecord={id:randomUUID(),name,ageLimit:Math.max(0,Math.min(18,Number(request.body.ageLimit??18))),avatar:safeAvatar(request.body.avatar,name[0].toUpperCase()),accent:safeAccent(request.body.accent),createdAt:new Date().toISOString(),pinHash:request.body.pin?hashPin(request.body.pin):undefined};db.profiles.push(profile);saveDb(db);const{pinHash,...safe}=profile;return reply.code(201).send({...safe,locked:Boolean(pinHash)})});
