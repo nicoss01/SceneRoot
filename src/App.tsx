@@ -267,16 +267,34 @@ function RatingPage({profile}:{profile:Profile}) {
   return <div className="rating-page" style={{backgroundImage:`linear-gradient(90deg,rgba(2,8,17,.72),rgba(2,8,17,.58)),url('${item.art??'/assets/sceneroot-landscape.png'}')`}}><Brand compact/><div className="rating-card"><span className="rating-icon"><Film/></span><h1>Vous avez terminé<br/>« {item.title} »</h1><p>Merci d’avoir regardé ! Que pensez-vous de ce {item.kind==='film'?'film':'programme'} ?</p><div className="stars">{[1,2,3,4,5].map(value=><button key={value} onClick={()=>setScore(value)} aria-label={`${value} étoile${value>1?'s':''}`}><Star fill={value<=score?'currentColor':'transparent'}/></button>)}</div><strong>{score} / 5 — {score===5?'Excellent':score===4?'Très bien':score===3?'Bien':score===2?'Moyen':'Décevant'}</strong><div className="rating-tags"><button className={tags.includes('À revoir')?'on':''} onClick={()=>toggle('À revoir')}><RotateCcw/>À revoir</button><button className={tags.includes('Émouvant')?'on':''} onClick={()=>toggle('Émouvant')}><Heart/>Émouvant</button><button className={tags.includes('Surprenant')?'on':''} onClick={()=>toggle('Surprenant')}><Sparkles/>Surprenant</button><button className={tags.includes('Trop long')?'on':''} onClick={()=>toggle('Trop long')}><Hourglass/>Trop long</button></div><div className="rating-actions"><button className="primary" onClick={save} disabled={saving}><Star fill="currentColor"/>{saving?'Enregistrement…':'Noter maintenant'}</button><button className="secondary" onClick={()=>navigate('/')}><Clock3/>Plus tard</button></div><small><Users/>Vos avis nous aident à proposer des recommandations plus personnalisées.</small></div></div>;
 }
 
-type RootsTab='all'|'film'|'serie'|'rated';
+type RootsTab='all'|'film'|'serie'|'rated'|'stats';
+type ProfileStats={watched:number;rated:number;averageRating:number|null;films:number;series:number;topGenres:{genre:string;count:number}[];topTags:{tag:string;count:number}[];activity:{month:string;count:number}[]};
+const monthLabels=['Jan','Fév','Mar','Avr','Mai','Juin','Juil','Août','Sep','Oct','Nov','Déc'];
+function RootsStats({profile}:{profile:Profile}){
+  const [stats,setStats]=useState<ProfileStats|null>(null);const [loading,setLoading]=useState(true);
+  useEffect(()=>{let active=true;fetch(`/api/stats/${encodeURIComponent(profile.id)}`).then(response=>response.ok?response.json():null).then((data:ProfileStats|null)=>{if(active){setStats(data);setLoading(false)}}).catch(()=>{if(active)setLoading(false)})},[profile.id]);
+  if(loading)return <div className="library-loading"><i/>Calcul de vos statistiques…</div>;
+  if(!stats||(!stats.watched&&!stats.rated))return <div className="library-empty"><BarChart3/><h2>Pas encore de statistiques</h2><p>Regardez et notez des contenus pour voir vos goûts se dessiner.</p></div>;
+  const maxGenre=Math.max(1,...stats.topGenres.map(genre=>genre.count));const maxMonth=Math.max(1,...stats.activity.map(month=>month.count));
+  return <div className="stats">
+    <div className="stat-kpis"><div className="stat-kpi"><b>{stats.watched}</b><span>Vus</span></div><div className="stat-kpi"><b>{stats.rated}</b><span>Notés</span></div><div className="stat-kpi"><b>{stats.averageRating??'—'}</b><span>Note moyenne</span></div><div className="stat-kpi"><b>{stats.films}</b><span>Films</span></div><div className="stat-kpi"><b>{stats.series}</b><span>Séries</span></div></div>
+    <div className="stat-panels">
+      <div className="stat-card"><h3><Sparkles/>Genres préférés</h3>{stats.topGenres.length?<div className="stat-bars">{stats.topGenres.map(genre=><div className="stat-bar" key={genre.genre}><span>{genre.genre}</span><i><b style={{width:`${genre.count/maxGenre*100}%`}}/></i><em>{genre.count}</em></div>)}</div>:<p className="muted-note">Aucun genre pour l’instant.</p>}</div>
+      <div className="stat-card"><h3><BarChart3/>Activité (6 mois)</h3><div className="stat-months">{stats.activity.map(month=>{const m=Number(month.month.slice(5,7))-1;return <div className="stat-month" key={month.month}><i style={{height:`${Math.max(4,month.count/maxMonth*100)}%`}} title={`${month.count} vu(s)`}/><span>{monthLabels[m]??''}</span></div>})}</div></div>
+    </div>
+    {stats.topTags.length>0&&<div className="stat-card"><h3><Heart/>Ressentis</h3><div className="stat-tags">{stats.topTags.map(tag=><span key={tag.tag}>{tag.tag} · {tag.count}</span>)}</div></div>}
+  </div>;
+}
 function RootsPage({profile}:{profile:Profile}) {
   const navigate=useNavigate(); const history=useHistory(profile.id); const [tab,setTab]=useState<RootsTab>('all');
   const filtered=history.items.filter(item=>tab==='all'?true:tab==='rated'?item.rating>0:item.kind===tab);
-  const tabs:[RootsTab,string,React.ReactNode][]=[['all','Déjà vus',<Clock3/>],['film','Films',<Film/>],['serie','Séries',<Tv/>],['rated','Favoris notés',<Heart/>]];
+  const tabs:[RootsTab,string,React.ReactNode][]=[['all','Déjà vus',<Clock3/>],['film','Films',<Film/>],['serie','Séries',<Tv/>],['rated','Favoris notés',<Heart/>],['stats','Statistiques',<BarChart3/>]];
   return <><div className="welcome"><h1>Mes <em>Roots</em></h1><p>Votre historique de visionnage personnel.</p></div>
     <div className="stat-tabs">{tabs.map(([value,label,icon])=><button className={tab===value?'is-on':''} key={value} onClick={()=>setTab(value)}>{icon}{label}</button>)}</div>
+    {tab==='stats'?<RootsStats profile={profile}/>:<>
     {history.loading&&<div className="library-loading"><i/>Lecture de votre historique…</div>}
     {!history.loading&&!filtered.length&&<div className="library-empty"><Clock3/><h2>Rien pour le moment</h2><p>Vos films et séries terminés ou notés apparaîtront ici.</p></div>}
-    {filtered.length>0&&<div className="grid">{filtered.map((m,i)=><MediaCard item={m} active={i===0} key={m.id} onOpen={()=>navigate(`/title/${m.id}`)}/>)}</div>}</> }
+    {filtered.length>0&&<div className="grid">{filtered.map((m,i)=><MediaCard item={m} active={i===0} key={m.id} onOpen={()=>navigate(`/title/${m.id}`)}/>)}</div>}</>}</> }
 
 const torrentStatus:Record<number,string>={0:'En pause',1:'Vérif. en attente',2:'Vérification',3:'En file',4:'Téléchargement',5:'Envoi en file',6:'Partage'};
 function formatEta(seconds:number){if(seconds<0)return null;if(seconds<60)return `${seconds} s`;const h=Math.floor(seconds/3600),m=Math.floor((seconds%3600)/60);return h>0?`${h} h ${m} min`:`${m} min`}
