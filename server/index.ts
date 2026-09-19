@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import staticPlugin from '@fastify/static';
-import { createReadStream, existsSync, mkdirSync, readFileSync, statfsSync, statSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, readFileSync, statfsSync, statSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { extname, isAbsolute, join, parse, relative, resolve } from 'node:path';
 import { execFile, spawn } from 'node:child_process';
@@ -11,6 +11,7 @@ import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypt
 import { recommendGroup } from './lib/recommend.js';
 import { rankDownloads, type RankCandidate, type RankPrefs } from './lib/rank.js';
 import { isAllowedOrigin, parseAllowedOrigins } from './lib/cors.js';
+import { atomicWriteJson, readJson } from './lib/jsonStore.js';
 
 type Rating = { profileId: string; mediaId: string; score: number; tags: string[]; at: string };
 type ProfileRecord = { id:string; name:string; ageLimit:number; avatar:string; accent:string; pinHash?:string; createdAt:string };
@@ -51,16 +52,15 @@ function readCache<T>(key:string):CacheEntry<T>|null{try{return JSON.parse(readF
 async function cachedJson<T>(key:string,url:string,ttlMs:number):Promise<CachedResult<T>>{
   const cached=readCache<T>(key);const now=Date.now();if(cached&&cached.expiresAt>now)return{data:cached.data,cachedAt:cached.storedAt,state:'hit'};
   const running=pendingCacheRequests.get(key);if(running)return running as Promise<CachedResult<T>>;
-  const request=(async()=>{try{const response=await fetch(url,{headers:{Accept:'application/json','User-Agent':'SceneRoot/0.1 (+https://github.com/sceneroot)'},signal:AbortSignal.timeout(12_000)});if(!response.ok)throw new Error(`HTTP ${response.status}`);const data=await response.json() as T;const entry:CacheEntry<T>={storedAt:new Date().toISOString(),expiresAt:Date.now()+ttlMs,data};writeFileSync(cachePath(key),JSON.stringify(entry));return{data,cachedAt:entry.storedAt,state:'miss'} as CachedResult<T>}catch(error){if(cached){app.log.warn({key,error},'Metadata provider unavailable; serving stale cache');return{data:cached.data,cachedAt:cached.storedAt,state:'stale'} as CachedResult<T>}throw error}finally{pendingCacheRequests.delete(key)}})();
+  const request=(async()=>{try{const response=await fetch(url,{headers:{Accept:'application/json','User-Agent':'SceneRoot/0.1 (+https://github.com/sceneroot)'},signal:AbortSignal.timeout(12_000)});if(!response.ok)throw new Error(`HTTP ${response.status}`);const data=await response.json() as T;const entry:CacheEntry<T>={storedAt:new Date().toISOString(),expiresAt:Date.now()+ttlMs,data};atomicWriteJson(cachePath(key),entry);return{data,cachedAt:entry.storedAt,state:'miss'} as CachedResult<T>}catch(error){if(cached){app.log.warn({key,error},'Metadata provider unavailable; serving stale cache');return{data:cached.data,cachedAt:cached.storedAt,state:'stale'} as CachedResult<T>}throw error}finally{pendingCacheRequests.delete(key)}})();
   pendingCacheRequests.set(key,request as Promise<CachedResult<unknown>>);return request;
 }
 
 function loadDb(): Db {
   const empty:Db={ profiles: [], library: [], ratings: [], playback: {} };
-  if (!existsSync(dbPath)) return empty;
-  try { return {...empty,...JSON.parse(readFileSync(dbPath, 'utf8'))} as Db; } catch { return empty; }
+  return {...empty,...readJson<Partial<Db>>(dbPath, empty)};
 }
-function saveDb(db: Db) { writeFileSync(dbPath, JSON.stringify(db, null, 2)); }
+function saveDb(db: Db) { atomicWriteJson(dbPath, db); }
 function hashPin(pin:string){const salt=randomBytes(16);const digest=scryptSync(pin,salt,32);return`${salt.toString('hex')}:${digest.toString('hex')}`}
 function verifyPin(pin:string,stored:string){try{const[saltHex,digestHex]=stored.split(':');const expected=Buffer.from(digestHex,'hex');const actual=scryptSync(pin,Buffer.from(saltHex,'hex'),expected.length);return timingSafeEqual(actual,expected)}catch{return false}}
 function safeAvatar(value:string|undefined,fallback:string){return value&&(/^\/assets\/avatars\/[a-z0-9-]+\.png$/i.test(value)||/^[\p{L}\p{N}]$/u.test(value))?value:fallback}
