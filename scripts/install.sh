@@ -156,6 +156,7 @@ echo uinput | sudo tee /etc/modules-load.d/sceneroot-uinput.conf >/dev/null
 sudo modprobe uinput || warn "Le module uinput sera chargé au prochain démarrage."
 for group in video render input seat; do getent group "$group" >/dev/null && sudo usermod -aG "$group" "$USER"; done
 run "Rechargement de systemd" sudo systemctl daemon-reload
+sudo systemctl enable --now seatd.service >/dev/null 2>&1 || warn "seatd indisponible (Cage utilisera logind)."
 run "Activation du serveur, des mises à jour et du pont CEC" sudo systemctl enable --now sceneroot.service sceneroot-update.timer sceneroot-cec.service
 
 # ── Étape 8 : kiosque ────────────────────────────────────────────────────────
