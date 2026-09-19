@@ -24,7 +24,7 @@ EnvironmentFile=-/etc/sceneroot.env
 TTYReset=yes
 TTYVHangup=yes
 TTYVTDisallocate=yes
-ExecStart=/usr/bin/dbus-run-session -- /usr/bin/cage -- /opt/sceneroot/scripts/kiosk.sh
+ExecStart=/usr/bin/cage -- /opt/sceneroot/scripts/kiosk.sh
 Restart=no
 
 [Install]

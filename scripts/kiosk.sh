@@ -37,7 +37,14 @@ fi
 
 echo "SceneRoot : démarrage de Chromium avec une échelle TV de ${TV_SCALE}x" >&2
 
+# Chromium a besoin d'un bus D-Bus de session : on l'enveloppe ici plutôt que
+# d'englober Cage (dbus-run-session autour de Cage fait échouer le service).
+LAUNCH=("$BROWSER" "${FLAGS[@]}" "$URL")
+if command -v dbus-run-session >/dev/null 2>&1; then
+  LAUNCH=(dbus-run-session -- "${LAUNCH[@]}")
+fi
+
 while true; do
-  "$BROWSER" "${FLAGS[@]}" "$URL" || true
+  "${LAUNCH[@]}" || true
   sleep 2
 done
