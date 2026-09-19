@@ -16,6 +16,7 @@ import { useHistory, useResume } from './hooks/usePlaybackHistory';
 import { useLibraryGroup } from './hooks/useLibraryGroup';
 import { useResolvedMedia } from './hooks/useResolvedMedia';
 import { formatBytes } from './lib/format';
+import { matchesDuration, matchesSearchFilters, type DurationBucket } from './lib/filters';
 import { DownloadPanel } from './components/DownloadPanel';
 import { useDownloads } from './hooks/useDownloads';
 import type { MediaItem, PlayerStatus, Profile } from './types';
@@ -106,16 +107,18 @@ function LibraryPage() {
 function SearchPage() {
   const params=new URLSearchParams(location.search);const initialGenre=params.get('genre')??'';
   const [query, setQuery] = useState(initialGenre?'':'planète'); const [debouncedQuery,setDebouncedQuery]=useState(query);const [selectedGenre,setSelectedGenre]=useState(initialGenre);const[type,setType]=useState<'all'|'film'|'serie'>('all'); const navigate = useNavigate();const sentinel=useRef<HTMLDivElement>(null);
+  const [duration,setDuration]=useState<DurationBucket>('any');const [minRating,setMinRating]=useState(0);const [quality,setQuality]=useState<''|MediaItem['quality']>('');
   useEffect(()=>{const timer=setTimeout(()=>setDebouncedQuery(query.trim()),320);return()=>clearTimeout(timer)},[query]);
   const catalog=useCatalog(type==='all'?undefined:type,20,true,selectedGenre,debouncedQuery);
   const normalized=query.toLowerCase();
   const localResults = media.filter(m => (type==='all'||m.kind===type)&&(!selectedGenre||m.genres.includes(selectedGenre))&&(!query || `${m.title} ${m.genres.join(' ')}`.toLowerCase().includes(normalized) || (normalized.includes('planète')&&m.genres.includes('Science-fiction'))));
-  const results=catalog.items.length?catalog.items:localResults;
+  const baseResults=catalog.items.length?catalog.items:localResults;
+  const results=baseResults.filter(item=>matchesSearchFilters(item,{duration,minRating,quality}));
   useEffect(()=>{const node=sentinel.current;if(!node)return;const observer=new IntersectionObserver(entries=>{if(entries[0]?.isIntersecting&&!catalog.loading&&catalog.hasMore)void catalog.loadMore()},{rootMargin:'420px'});observer.observe(node);return()=>observer.disconnect()},[catalog.hasMore,catalog.loadMore,catalog.loading]);
-  const reset=()=>{setQuery('');setSelectedGenre('');setType('all')};
+  const reset=()=>{setQuery('');setSelectedGenre('');setType('all');setDuration('any');setMinRating(0);setQuality('')};
   return <><label className="searchbox"><Search/><input autoFocus value={query} onChange={e=>setQuery(e.target.value)} placeholder="Rechercher un film ou une série…"/><kbd>OK</kbd></label>
     <div className="search-filter-title"><h2>Filtres</h2><button onClick={reset}><RefreshCw/> Réinitialiser les filtres</button></div>
-    <div className="search-filters"><div className="filter-panel"><h3><Film/>Type</h3><div>{([['all','Tous'],['film','Films'],['serie','Séries']] as const).map(([value,label])=><button className={type===value?'on':''} onClick={()=>setType(value)} key={value}>{label}</button>)}</div></div><div className="filter-panel"><h3><Timer/>Durée</h3><div><button>&lt; 1h30</button><button className="on">1h30 – 2h</button><button>&gt; 2h</button></div></div><div className="filter-panel"><h3><Star/>Notes utilisateurs</h3><div><button>≥ 5</button><button className="on">≥ 7</button><button>≥ 8</button></div></div><div className="filter-panel"><h3><Monitor/>Qualité</h3><div><button>720p</button><button className="on">1080p</button><button>4K</button></div></div></div>
+    <div className="search-filters"><div className="filter-panel"><h3><Film/>Type</h3><div>{([['all','Tous'],['film','Films'],['serie','Séries']] as const).map(([value,label])=><button className={type===value?'on':''} onClick={()=>setType(value)} key={value}>{label}</button>)}</div></div><div className="filter-panel"><h3><Timer/>Durée</h3><div>{([['short','< 1h30'],['medium','1h30 – 2h'],['long','> 2h']] as const).map(([value,label])=><button className={duration===value?'on':''} onClick={()=>setDuration(current=>current===value?'any':value)} key={value}>{label}</button>)}</div></div><div className="filter-panel"><h3><Star/>Notes utilisateurs</h3><div>{[5,7,8].map(value=><button className={minRating===value?'on':''} onClick={()=>setMinRating(current=>current===value?0:value)} key={value}>≥ {value}</button>)}</div></div><div className="filter-panel"><h3><Monitor/>Qualité</h3><div>{(['720p','1080p','4K'] as const).map(value=><button className={quality===value?'on':''} onClick={()=>setQuality(current=>current===value?'':value)} key={value}>{value}</button>)}</div></div></div>
     <div className="genre-filter"><h3><Sparkles/>Tous les genres</h3><div>{allGenres.map(genre=><button className={selectedGenre===genre?'on':''} onClick={()=>setSelectedGenre(current=>current===genre?'':genre)} key={genre}>{genre}</button>)}</div></div>
     <div className="section-title"><h2>{query?`Résultats pour « ${query} »`:selectedGenre||'Tous les contenus'}</h2><span>{catalog.source?`${results.length} résultats · ${catalog.source}`:`${results.length} résultats`}</span></div>
     <div className="grid">{results.map((m,i)=><MediaCard item={m} active={i===0} key={m.id} onOpen={()=>navigate(`/title/${m.id}`)}/>)}</div><div className="catalog-sentinel" ref={sentinel}>{catalog.loading&&<><i/>Recherche dans le catalogue…</>}{catalog.error&&<button className="secondary" onClick={()=>catalog.loadMore()}>Réessayer</button>}{!catalog.loading&&!results.length&&<span>Aucun titre ne correspond encore à ces filtres.</span>}</div></>;
@@ -165,7 +168,6 @@ function TonightPage({availableProfiles}:{availableProfiles:Profile[]}) {
   </>;
 }
 const moodGenres:Record<Mood,string[]>={Détente:['Comédie','Famille','Animation'],Action:['Action','Aventure','Action & aventure'],Émotion:['Drame','Romance'],Frissons:['Horreur','Thriller','Mystère'],Découverte:['Documentaire','Histoire','Science-fiction']};
-function matchesDuration(item:MediaItem,duration:'short'|'medium'|'any'){if(duration==='any'||item.kind==='serie')return true;const match=item.duration.match(/(?:(\d+)h)?(\d{1,2})/);if(!match)return true;const minutes=Number(match[1]??0)*60+Number(match[2]??0);return duration==='short'?minutes<90:minutes>=90&&minutes<=120}
 function selectedProfileNames(ids:string[],availableProfiles:Profile[]){const names=ids.map(id=>availableProfiles.find(profile=>profile.id===id)?.name).filter(Boolean);return names.length?`${names.join(', ')} sont pris en compte`:'sélection familiale neutre'}
 function FilterGroup({title,children}:{title:string;children:React.ReactNode}){return <div className="filter-group"><strong>{title}</strong><div>{children}</div></div>}
 
