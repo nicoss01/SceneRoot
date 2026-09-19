@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 export type Torrent = {
   id: number;
@@ -18,7 +18,6 @@ export function useDownloads(pollMs = 2000) {
   const [torrents, setTorrents] = useState<Torrent[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
-  const started = useRef(false);
   const refresh = useCallback(async () => {
     try {
       const response = await fetch('/api/downloads');
@@ -35,7 +34,6 @@ export function useDownloads(pollMs = 2000) {
     await refresh();
   }, [refresh]);
   useEffect(() => {
-    if (started.current) return; started.current = true;
     void refresh();
     const interval = setInterval(() => void refresh(), pollMs);
     return () => clearInterval(interval);

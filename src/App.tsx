@@ -14,6 +14,8 @@ import { useCatalog } from './hooks/useCatalog';
 import { useLibrary } from './hooks/useLibrary';
 import { useHistory, useResume } from './hooks/usePlaybackHistory';
 import { useLibraryGroup } from './hooks/useLibraryGroup';
+import { useResolvedMedia } from './hooks/useResolvedMedia';
+import { formatBytes } from './lib/format';
 import { DownloadPanel } from './components/DownloadPanel';
 import { useDownloads } from './hooks/useDownloads';
 import type { MediaItem, PlayerStatus, Profile } from './types';
@@ -169,8 +171,8 @@ function FilterGroup({title,children}:{title:string;children:React.ReactNode}){r
 
 function versionLabel(version:{size:number;technical?:Record<string,unknown>}){const height=Number(version.technical?.height??0);const quality=height>=2000?'4K':height>=900?'1080p':height>=600?'720p':'SD';const codec=version.technical?.videoCodec?String(version.technical.videoCodec).toUpperCase():'';const hdr=version.technical?.hdr?' · HDR':'';return `${quality}${codec?` · ${codec}`:''}${hdr} · ${formatBytes(version.size)}`}
 function DetailPage({profile}:{profile:Profile}) {
-  const { id } = useParams(); const navigate = useNavigate(); const item = resolveMedia(id);
-  const isLocal=Boolean(item.local);const isLocalSeries=isLocal&&item.kind==='serie';
+  const { id } = useParams(); const navigate = useNavigate(); const {item,isLocal}=useResolvedMedia(id);
+  const isLocalSeries=isLocal&&item.kind==='serie';
   const [downloading,setDownloading]=useState(false);const [chosenVersion,setChosenVersion]=useState<string|undefined>();
   const {seasons,detail}=useLibraryGroup(id,profile.id,isLocal);
   const nextId=detail?.nextEpisodeId;
@@ -192,8 +194,7 @@ function DetailPage({profile}:{profile:Profile}) {
 }
 
 function PlayerPage({profile}:{profile:Profile}) {
-  const { id } = useParams(); const navigate=useNavigate(); const item=resolveMedia(id);
-  const isLocal=Boolean(item.local)&&Boolean(id);
+  const { id } = useParams(); const navigate=useNavigate(); const {item,isLocal:localMedia}=useResolvedMedia(id); const isLocal=localMedia&&Boolean(id);
   const [status,setStatus]=useState<PlayerStatus|null>(null);
   const [panel,setPanel]=useState<'sub'|'audio'|null>(null);
   const [error,setError]=useState('');
@@ -220,7 +221,7 @@ function PlayerPage({profile}:{profile:Profile}) {
 function RatingPage({profile}:{profile:Profile}) {
   const {id}=useParams();const navigate=useNavigate();const item=resolveMedia(id);const [score,setScore]=useState(4);const [tags,setTags]=useState<string[]>([]);const [saving,setSaving]=useState(false);
   const toggle=(tag:string)=>setTags(current=>current.includes(tag)?current.filter(x=>x!==tag):[...current,tag]);
-  const save=async()=>{setSaving(true);try{await fetch('/api/ratings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({profileId:profile.id,mediaId:item.id,score:score*2,tags})})}finally{navigate('/roots')}};
+  const save=async()=>{setSaving(true);try{await fetch('/api/ratings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({profileId:profile.id,mediaId:id??item.id,score:score*2,tags})})}finally{navigate('/roots')}};
   return <div className="rating-page" style={{backgroundImage:`linear-gradient(90deg,rgba(2,8,17,.72),rgba(2,8,17,.58)),url('${item.art??'/assets/sceneroot-landscape.png'}')`}}><Brand compact/><div className="rating-card"><span className="rating-icon"><Film/></span><h1>Vous avez terminé<br/>« {item.title} »</h1><p>Merci d’avoir regardé ! Que pensez-vous de ce {item.kind==='film'?'film':'programme'} ?</p><div className="stars">{[1,2,3,4,5].map(value=><button key={value} onClick={()=>setScore(value)} aria-label={`${value} étoile${value>1?'s':''}`}><Star fill={value<=score?'currentColor':'transparent'}/></button>)}</div><strong>{score} / 5 — {score===5?'Excellent':score===4?'Très bien':score===3?'Bien':score===2?'Moyen':'Décevant'}</strong><div className="rating-tags"><button className={tags.includes('À revoir')?'on':''} onClick={()=>toggle('À revoir')}><RotateCcw/>À revoir</button><button className={tags.includes('Émouvant')?'on':''} onClick={()=>toggle('Émouvant')}><Heart/>Émouvant</button><button className={tags.includes('Surprenant')?'on':''} onClick={()=>toggle('Surprenant')}><Sparkles/>Surprenant</button><button className={tags.includes('Trop long')?'on':''} onClick={()=>toggle('Trop long')}><Hourglass/>Trop long</button></div><div className="rating-actions"><button className="primary" onClick={save} disabled={saving}><Star fill="currentColor"/>{saving?'Enregistrement…':'Noter maintenant'}</button><button className="secondary" onClick={()=>navigate('/')}><Clock3/>Plus tard</button></div><small><Users/>Vos avis nous aident à proposer des recommandations plus personnalisées.</small></div></div>;
 }
 
@@ -249,7 +250,6 @@ function DownloadsPage() {
   </>;
 }
 type StorageRoot={root:string;total:number;free:number;available:number;libraryBytes:number};
-function formatBytes(bytes:number){if(!bytes)return '0 o';const units=['o','Ko','Mo','Go','To'];const i=Math.min(units.length-1,Math.floor(Math.log(bytes)/Math.log(1024)));return `${(bytes/1024**i).toFixed(i>=3?1:0)} ${units[i]}`}
 function SettingsPage() {
   const [scan, setScan] = useState(false); const [scanMessage,setScanMessage]=useState('Surveillance active'); const [cec,setCec]=useState(true); const [updates,setUpdates]=useState(true);
   const [storage,setStorage]=useState<StorageRoot[]>([]);

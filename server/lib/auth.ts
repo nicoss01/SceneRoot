@@ -1,4 +1,12 @@
+import { timingSafeEqual } from 'node:crypto';
+
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1', 'localhost']);
+
+function safeEqual(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  return bufA.length === bufB.length && timingSafeEqual(bufA, bufB);
+}
 
 export function isLoopback(remoteAddress: string | undefined): boolean {
   return !!remoteAddress && LOOPBACK.has(remoteAddress);
@@ -19,8 +27,8 @@ export function bearerToken(authorization: string | undefined): string | undefin
  */
 export function isAdminAuthorized(remoteAddress: string | undefined, token: string | undefined, configuredToken: string | undefined): boolean {
   if (isLoopback(remoteAddress)) return true;
-  if (!configuredToken) return false;
-  return token === configuredToken;
+  if (!configuredToken || !token) return false;
+  return safeEqual(token, configuredToken);
 }
 
 export function requiresAdmin(method: string, url: string): boolean {

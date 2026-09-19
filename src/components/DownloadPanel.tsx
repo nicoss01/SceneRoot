@@ -1,17 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Check, Download, Loader2, X } from 'lucide-react';
 import { parseRelease } from '../lib/release';
+import { formatBytes } from '../lib/format';
 import type { MediaItem } from '../types';
 
 type SourceResult = { source: string; title: string; link?: string; size: number; seeders: number; published?: string };
 type RankedResult = SourceResult & { id: string; quality: string; languages: string[]; hdr: boolean; codec?: string; compatibilityScore: number };
-
-function formatBytes(bytes: number) {
-  if (!bytes) return '—';
-  const units = ['o', 'Ko', 'Mo', 'Go', 'To'];
-  const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
-  return `${(bytes / 1024 ** i).toFixed(i >= 3 ? 1 : 0)} ${units[i]}`;
-}
 
 export function DownloadPanel({ item, onClose }: { item: MediaItem; onClose: () => void }) {
   const [results, setResults] = useState<RankedResult[]>([]);
@@ -76,7 +70,7 @@ export function DownloadPanel({ item, onClose }: { item: MediaItem; onClose: () 
             {result.hdr && <span>HDR</span>}
             {result.codec && <span>{result.codec}</span>}
             {result.languages.map(lang => <span key={lang} className="lang">{lang.toUpperCase()}</span>)}
-            <span>{formatBytes(result.size)}</span>
+            <span>{formatBytes(result.size, '—')}</span>
             <span>{result.seeders} seeders</span>
             <span className="score">{result.compatibilityScore}% compat.</span>
             <span className="src">{result.source}</span>
