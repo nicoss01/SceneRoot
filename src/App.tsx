@@ -117,7 +117,7 @@ function SearchPage() {
 }
 
 type Mood = 'Détente'|'Action'|'Émotion'|'Frissons'|'Découverte';
-type ScoredMedia = { item:MediaItem; score:number; affinities:number[]; minAffinity:number };
+type ScoredMedia = { item:MediaItem; score:number; affinities:number[]; minAffinity:number; seenCount:number };
 function TonightPage({availableProfiles}:{availableProfiles:Profile[]}) {
   const navigate=useNavigate();
   const library=useLibrary();
@@ -144,9 +144,9 @@ function TonightPage({availableProfiles}:{availableProfiles:Profile[]}) {
       try{
         const response=await fetch('/api/recommendations/group',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({profileIds,candidates})});
         if(!response.ok)throw new Error();
-        const rows=await response.json() as Array<{id:string;score:number;affinities:number[]}>;
+        const rows=await response.json() as Array<{id:string;score:number;affinities:number[];seenBy?:string[]}>;
         if(!active)return;
-        const mapped=rows.flatMap(row=>{const item=byId.get(row.id);if(!item)return[];const bonus=moodGenres[mood].some(value=>item.genres.includes(value))?5:0;const affinities=row.affinities??[];return[{item,score:Math.max(0,Math.min(100,row.score+bonus)),affinities,minAffinity:affinities.length?Math.round(Math.min(...affinities)):row.score}]});
+        const mapped=rows.flatMap(row=>{const item=byId.get(row.id);if(!item)return[];const bonus=moodGenres[mood].some(value=>item.genres.includes(value))?5:0;const affinities=row.affinities??[];return[{item,score:Math.max(0,Math.min(100,row.score+bonus)),affinities,minAffinity:affinities.length?Math.round(Math.min(...affinities)):row.score,seenCount:row.seenBy?.length??0}]});
         setScored(mapped.sort((a,b)=>b.score-a.score).slice(0,5));
       }catch{if(active)setScored([])}finally{if(active)setComputing(false)}
     })();
@@ -156,7 +156,7 @@ function TonightPage({availableProfiles}:{availableProfiles:Profile[]}) {
   return <><div className="tonight-head"><div className="welcome"><h1>Que regarde-t-on ce soir ?</h1><p>SceneRoot cherche le meilleur compromis, pas la moyenne la plus facile.</p></div><button className="primary magic" onClick={pick} disabled={!scored.length}><WandSparkles/>{choosing?'Choix en cours…':'Faites le choix pour nous'}</button></div>
     {demoMode&&<div className="player-note" style={{margin:'0 0 12px'}}>Mode démonstration : aucune bibliothèque locale indexée, propositions issues d’un catalogue fictif.</div>}
     <div className="chooser"><FilterGroup title="Profils">{availableProfiles.map(p=><button className={selected.includes(p.id)?'on':''} onClick={()=>setSelected(s=>s.includes(p.id)?s.filter(x=>x!==p.id):[...s,p.id])} key={p.id}>{p.name}{selected.includes(p.id)&&<Check/>}</button>)}</FilterGroup><FilterGroup title="Envie">{(['film','serie','any'] as const).map(v=><button className={kind===v?'on':''} onClick={()=>setKind(v)} key={v}>{v==='film'?'Film':v==='serie'?'Série':'Peu importe'}</button>)}</FilterGroup><FilterGroup title="Durée">{([['short','< 1h30'],['medium','1h30–2h'],['any','Peu importe']] as const).map(([v,l])=><button className={duration===v?'on':''} onClick={()=>setDuration(v)} key={v}>{l}</button>)}</FilterGroup><FilterGroup title="Ambiance">{(['Détente','Action','Émotion','Frissons','Découverte'] as Mood[]).map(v=><button className={mood===v?'on':''} onClick={()=>setMood(v)} key={v}>{v}</button>)}</FilterGroup><label className="tonight-genre"><strong>Genre</strong><select value={genre} onChange={event=>setGenre(event.target.value)}><option value="">Tous les genres</option>{allGenres.map(value=><option value={value} key={value}>{value}</option>)}</select></label></div>
-    <div className="match-list">{scored.map((x,i)=><button className={`match-card ${chosen===x.item.id?'winner':''}`} key={x.item.id} onClick={()=>navigate(`/title/${x.item.id}`)}><div className="match-rank">{i+1}</div><div className="match-art" style={{'--a':x.item.palette[0],'--b':x.item.palette[1]} as React.CSSProperties}>{x.item.symbol}</div><div className="match-copy"><h3>{x.item.title}</h3><strong>{x.score} % compatible</strong><p>✓ {selectedProfileNames(selected,availableProfiles)} · ✓ satisfaction minimale {x.minAffinity}% · ✓ pénalité appliquée aux désaccords · {x.item.duration}</p></div><ChevronRight/></button>)}{!scored.length&&!computing&&<div className="empty-recommendations"><Sparkles/><h3>Aucun titre avec ces contraintes</h3><p>Essayez « Peu importe » pour la durée ou choisissez un autre genre.</p></div>}{computing&&!scored.length&&<div className="library-loading"><i/>Calcul du meilleur compromis…</div>}</div>
+    <div className="match-list">{scored.map((x,i)=><button className={`match-card ${chosen===x.item.id?'winner':''}`} key={x.item.id} onClick={()=>navigate(`/title/${x.item.id}`)}><div className="match-rank">{i+1}</div><div className="match-art" style={{'--a':x.item.palette[0],'--b':x.item.palette[1]} as React.CSSProperties}>{x.item.symbol}</div><div className="match-copy"><h3>{x.item.title}</h3><strong>{x.score} % compatible</strong><p>✓ {selectedProfileNames(selected,availableProfiles)} · ✓ satisfaction minimale {x.minAffinity}% · {x.seenCount>0?`⚠ déjà vu par ${x.seenCount} profil${x.seenCount>1?'s':''}`:'✓ jamais vu par le groupe'} · {x.item.duration}</p></div><ChevronRight/></button>)}{!scored.length&&!computing&&<div className="empty-recommendations"><Sparkles/><h3>Aucun titre avec ces contraintes</h3><p>Essayez « Peu importe » pour la durée ou choisissez un autre genre.</p></div>}{computing&&!scored.length&&<div className="library-loading"><i/>Calcul du meilleur compromis…</div>}</div>
   </>;
 }
 const moodGenres:Record<Mood,string[]>={Détente:['Comédie','Famille','Animation'],Action:['Action','Aventure','Action & aventure'],Émotion:['Drame','Romance'],Frissons:['Horreur','Thriller','Mystère'],Découverte:['Documentaire','Histoire','Science-fiction']};
