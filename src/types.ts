@@ -32,6 +32,7 @@ export interface MediaItem {
   sizeBytes?: number;
   matched?: boolean;
   local?: boolean;
+  badge?: 'new' | 'episode';
 }
 
 export interface PlayerTrack {

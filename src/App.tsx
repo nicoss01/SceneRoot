@@ -18,6 +18,7 @@ import { useSeriesEpisodes } from './hooks/useSeriesEpisodes';
 import { usePlayerChrome } from './hooks/usePlayerChrome';
 import { useResolvedMedia } from './hooks/useResolvedMedia';
 import { usePreferences } from './hooks/usePreferences';
+import { WatchedContext } from './context/watched';
 import { formatBytes } from './lib/format';
 import { matchesDuration, matchesSearchFilters, type DurationBucket } from './lib/filters';
 import { DownloadPanel } from './components/DownloadPanel';
@@ -67,14 +68,20 @@ function ProfileGate({ onSelect, availableProfiles, onSaved, onDeleted }: { onSe
   </div>;
 }
 
+function WatchedProvider({profileId,children}:{profileId:string;children:React.ReactNode}) {
+  const [watched,setWatched]=useState<Set<string>>(new Set());
+  useEffect(()=>{let active=true;const load=()=>fetch(`/api/watched/${encodeURIComponent(profileId)}`).then(response=>response.ok?response.json():[]).then((ids:string[])=>{if(active)setWatched(new Set(ids))}).catch(()=>{});void load();const interval=setInterval(()=>void load(),60_000);return()=>{active=false;clearInterval(interval)}},[profileId]);
+  return <WatchedContext.Provider value={watched}>{children}</WatchedContext.Provider>;
+}
 function Section({ title, items, onOpen, wide = false }: { title: string; items: MediaItem[]; onOpen: (m: MediaItem) => void; wide?: boolean }) {
   return <section><div className="section-title"><h2>{title}</h2><button>Tout voir <ChevronRight size={18}/></button></div><div className="rail">{items.map((m, i) => <MediaCard key={m.id} item={m} active={i === 0} wide={wide} onOpen={() => onOpen(m)} />)}</div></section>;
 }
 
-function RemoteSection({ title, fallback, onOpen, kind }: { title:string; fallback:MediaItem[]; onOpen:(item:MediaItem)=>void; kind?:'film'|'serie' }) {
+function RemoteSection({ title, fallback, onOpen, kind, recent }: { title:string; fallback:MediaItem[]; onOpen:(item:MediaItem)=>void; kind?:'film'|'serie'; recent?:boolean }) {
   const sectionRef=useRef<HTMLElement>(null);const[visible,setVisible]=useState(false);
-  const {items,loading,source}=useCatalog(kind,6,visible);
+  const catalog=useCatalog(kind,6,visible,'','',recent?'recent':'');const {items,loading,source,refresh}=catalog;
   useEffect(()=>{const node=sectionRef.current;if(!node)return;const observer=new IntersectionObserver(entries=>{if(entries[0]?.isIntersecting){setVisible(true);observer.disconnect()}},{rootMargin:'320px'});observer.observe(node);return()=>observer.disconnect()},[]);
+  useEffect(()=>{if(!visible)return;const interval=setInterval(()=>refresh(),24*60*60*1000);return()=>clearInterval(interval)},[visible,refresh]);
   const displayed=items.length?items:fallback;
   return <section ref={sectionRef}><div className="section-title"><h2>{title}</h2><span>{loading?'Chargement…':source?`Source : ${source}`:''}</span></div><div className="rail">{displayed.map((item,index)=><MediaCard key={item.id} item={item} active={index===0} onOpen={()=>onOpen(item)}/>)}</div></section>;
 }
@@ -86,7 +93,7 @@ function HomePage({profile}:{profile:Profile}) {
   return <>
     <div className="welcome home-welcome"><h1>Bonsoir, {profile.name}</h1><p>De belles histoires vous attendent.</p></div>
     {resumeItems.length>0&&<Section title="Reprendre la lecture" items={resumeItems.slice(0,6)} onOpen={open} wide />}
-    <RemoteSection title="Dernières sorties" fallback={media.slice(4,10)} onOpen={open} />
+    <RemoteSection title="Dernières sorties" fallback={media.slice(4,10)} onOpen={open} recent />
     <RemoteSection title="Films à découvrir" fallback={media.filter(m=>m.kind==='film').slice(0,6)} onOpen={open} kind="film" />
     <RemoteSection title="Séries à découvrir" fallback={media.filter(m=>m.kind==='serie').slice(0,6)} onOpen={open} kind="serie" />
     <section><div className="section-title"><h2>Explorer par genre</h2><span>{allGenres.length} genres films et séries</span></div><div className="genres">{allGenres.map((label,i) => {const Icon=i%4===0?Film:i%4===1?Tv:i%4===2?Sparkles:Heart;return <button className={`genre focusable ${i===0?'is-active':''}`} key={label} onClick={()=>navigate(`/search?genre=${encodeURIComponent(label)}`)}><Icon />{label}</button>})}</div></section>
@@ -404,8 +411,8 @@ function App() {
   const removeProfile=(deleted:Profile)=>{setSavedProfiles(current=>current.filter(item=>item.id!==deleted.id));if(profile?.id===deleted.id){localStorage.removeItem('sceneroot-profile');setProfile(null)}};
   if(!profile)return <ProfileGate availableProfiles={availableProfiles} onSaved={upsertProfile} onDeleted={removeProfile} onSelect={p=>{localStorage.setItem('sceneroot-profile',JSON.stringify(p));setProfile(p)}}/>;
   const switchProfile=()=>{localStorage.removeItem('sceneroot-profile');setProfile(null)};
-  return <Routes><Route path="/player/:id" element={<PlayerPage profile={profile}/>}/><Route path="/stream/:id" element={<StreamPlayerPage profile={profile}/>}/><Route path="/rate/:id" element={<RatingPage profile={profile}/>}/><Route path="/title/:id" element={<Shell profile={profile} onSwitchProfile={switchProfile}><DetailPage profile={profile}/></Shell>}/><Route path="*" element={<Shell profile={profile} onSwitchProfile={switchProfile}><Routes>
+  return <WatchedProvider profileId={profile.id}><Routes><Route path="/player/:id" element={<PlayerPage profile={profile}/>}/><Route path="/stream/:id" element={<StreamPlayerPage profile={profile}/>}/><Route path="/rate/:id" element={<RatingPage profile={profile}/>}/><Route path="/title/:id" element={<Shell profile={profile} onSwitchProfile={switchProfile}><DetailPage profile={profile}/></Shell>}/><Route path="*" element={<Shell profile={profile} onSwitchProfile={switchProfile}><Routes>
     <Route path="/" element={<HomePage profile={profile}/>}/><Route path="/films" element={<BrowsePage kind="film" title="Films"/>}/><Route path="/series" element={<BrowsePage kind="serie" title="Séries"/>}/><Route path="/discover" element={<BrowsePage title="Découvrir"/>}/><Route path="/tonight" element={<TonightPage availableProfiles={availableProfiles} profile={profile}/>}/><Route path="/library" element={<LibraryPage/>}/><Route path="/downloads" element={<DownloadsPage/>}/><Route path="/roots" element={<RootsPage profile={profile}/>}/><Route path="/search" element={<SearchPage/>}/><Route path="/settings" element={<SettingsPage/>}/><Route path="/about" element={<AboutPage/>}/>
-  </Routes></Shell>}/></Routes>;
+  </Routes></Shell>}/></Routes></WatchedProvider>;
 }
 export default App;

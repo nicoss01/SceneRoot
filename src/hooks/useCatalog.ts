@@ -10,7 +10,7 @@ type CatalogResponse = {
   cachedAt: string;
 };
 
-export function useCatalog(kind?: MediaKind, limit = 12, enabled = true, genre = '', query = '') {
+export function useCatalog(kind?: MediaKind, limit = 12, enabled = true, genre = '', query = '', sort = '') {
   const [items, setItems] = useState<MediaItem[]>([]);
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
@@ -19,14 +19,16 @@ export function useCatalog(kind?: MediaKind, limit = 12, enabled = true, genre =
   const [error, setError] = useState('');
   const requestRef = useRef<AbortController | null>(null);
 
-  useEffect(() => {
+  const reset = useCallback(() => {
     requestRef.current?.abort();
     setItems([]);
     setPage(0);
     setHasMore(true);
     setSource('');
     setError('');
-  }, [genre, kind, limit, query]);
+  }, []);
+
+  useEffect(() => { reset(); }, [genre, kind, limit, query, sort, reset]);
 
   const loadMore = useCallback(async () => {
     if (!enabled || loading || !hasMore) return;
@@ -41,6 +43,7 @@ export function useCatalog(kind?: MediaKind, limit = 12, enabled = true, genre =
       if (kind) params.set('kind', kind);
       if (genre) params.set('genre', genre);
       if (query) params.set('q', query);
+      if (sort) params.set('sort', sort);
       const response = await fetch(`/api/catalog?${params}`, { signal: controller.signal });
       if (!response.ok) throw new Error(`Catalogue indisponible (${response.status})`);
       const result = await response.json() as CatalogResponse;
@@ -58,12 +61,12 @@ export function useCatalog(kind?: MediaKind, limit = 12, enabled = true, genre =
     } finally {
       if (!controller.signal.aborted) setLoading(false);
     }
-  }, [enabled, genre, hasMore, kind, limit, loading, page, query]);
+  }, [enabled, genre, hasMore, kind, limit, loading, page, query, sort]);
 
   useEffect(() => {
     if (enabled && page === 0 && items.length === 0 && !loading && !error) void loadMore();
   }, [enabled, error, items.length, loadMore, loading, page]);
 
   useEffect(() => () => requestRef.current?.abort(), []);
-  return { items, hasMore, loading, source, error, loadMore };
+  return { items, hasMore, loading, source, error, loadMore, refresh: reset };
 }

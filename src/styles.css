@@ -97,6 +97,10 @@ section { margin: 0 0 13px; }
 .media-card__art:after { content: ""; position: absolute; inset: 42% 0 0; background: linear-gradient(transparent, rgba(2,9,16,.78)); }
 .media-card__orb, .media-card__symbol { display: none; }
 .quality { position: absolute; right: 7px; bottom: 7px; z-index: 2; padding: 2px 6px; color: #e8f4ff; background: rgba(3,12,22,.8); border: 1px solid #7797b7; border-radius: 4px; font-size: 10px; font-weight: 800; }
+.media-badge { position: absolute; left: 7px; top: 7px; z-index: 2; padding: 3px 8px; border-radius: 5px; font-size: 10px; font-weight: 800; letter-spacing: .3px; color: #03151f; }
+.media-badge--new { background: var(--cyan); }
+.media-badge--episode { background: #a78bfa; }
+.media-seen { position: absolute; right: 7px; top: 7px; z-index: 2; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: rgba(3,20,12,.85); border: 1px solid #34d399; color: #34d399; box-shadow: 0 0 10px rgba(52,211,153,.4); }
 .media-card__play { position: absolute; left: 10px; bottom: 9px; z-index: 2; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: rgba(3,14,25,.88); border: 2px solid #d6f8ff; color: white; }
 .media-card__body { min-height: 55px; padding: 8px 10px 9px; display: grid; grid-template-columns: 1fr auto; gap: 2px 6px; }
 .media-card__body strong { grid-column: 1 / -1; overflow: hidden; color: white; font-size: 14px; white-space: nowrap; text-overflow: ellipsis; }
