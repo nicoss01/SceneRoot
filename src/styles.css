@@ -382,8 +382,12 @@ section { margin: 0 0 13px; }
 .storage-key { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; color: #afc0d4; font-size: 12px; }
 .source-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding: 13px; background: #0a1e31; border: 1px solid #2c4b67; border-radius: 8px; }
 .source-row span { display: flex; flex-direction: column; }
-.source-row small { color: #8fa6c0; }
+.source-row small { color: #8fa6c0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 280px; }
 .dot { width: 11px; height: 11px; background: #39e58e; border-radius: 50%; box-shadow: 0 0 10px #39e58e; }
+.source-form { display: grid; gap: 8px; margin: 12px 0; }
+.source-form input { padding: 9px 11px; background: rgba(5,17,30,.8); border: 1px solid #23405c; border-radius: 8px; color: inherit; }
+.reserve-field { display: block; }
+.reserve-field input { width: 100%; margin-top: 8px; }
 .sources > small { display: block; margin-top: 17px; }
 
 .spin { animation: spin 1s linear infinite; }

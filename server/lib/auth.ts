@@ -33,7 +33,8 @@ export function isAdminAuthorized(remoteAddress: string | undefined, token: stri
 
 export function requiresAdmin(method: string, url: string): boolean {
   const path = url.split('?')[0];
-  if (method === 'DELETE') return path === '/api/cache';
+  if (method === 'DELETE') return path === '/api/cache' || /^\/api\/sources\/[^/]+$/.test(path);
+  if (method === 'PUT') return path === '/api/settings';
   if (method !== 'POST') return false;
   if (path === '/api/downloads/rank') return false;
   return path === '/api/library/scan'
@@ -41,5 +42,6 @@ export function requiresAdmin(method: string, url: string): boolean {
     || path === '/api/cec' || path.startsWith('/api/cec/')
     || path === '/api/downloads'
     || /^\/api\/downloads\/[^/]+\/control$/.test(path)
+    || path === '/api/sources'
     || path.startsWith('/api/player/');
 }

@@ -13,12 +13,15 @@ import { rankDownloads, type RankCandidate, type RankPrefs } from './lib/rank.js
 import { isAllowedOrigin, parseAllowedOrigins } from './lib/cors.js';
 import { atomicWriteJson, readJson } from './lib/jsonStore.js';
 import { bearerToken, isAdminAuthorized, requiresAdmin } from './lib/auth.js';
+import { maskSource, sanitizeSource, type TorznabSource } from './lib/sources.js';
 
 type Rating = { profileId: string; mediaId: string; score: number; tags: string[]; at: string };
 type ProfileRecord = { id:string; name:string; ageLimit:number; avatar:string; accent:string; pinHash?:string; createdAt:string };
 type MediaMetadata = { provider:'tmdb'|'tvmaze'|'wikipedia'; providerId:number|string; title:string; originalTitle?:string; overview?:string; poster?:string; backdrop?:string; genres?:string[]; releaseDate?:string; ageRating?:string; runtime?:number; sourceUrl?:string; informationSource?:string };
 type PlaybackEntry = { position:number; duration:number; updatedAt:string };
-type Db = { profiles: ProfileRecord[]; library: LibraryItem[]; ratings: Rating[]; playback: Record<string, PlaybackEntry|number> };
+type Settings = { minFreeGb?:number; preferredQuality?:string; preferredLanguages?:string[]; preferHdr?:boolean; torznabSources?:TorznabSource[] };
+type GuestSession = { id:string; ageLimit:number; createdAt:string; expiresAt:number|null; ephemeral:boolean };
+type Db = { profiles: ProfileRecord[]; library: LibraryItem[]; ratings: Rating[]; playback: Record<string, PlaybackEntry|number>; settings: Settings; guests: GuestSession[] };
 type LibraryItem = { id: string; title: string; path: string; kind: 'film'|'serie'; year?: number; season?:number; episode?:number; size: number; modifiedAt:string; addedAt: string; technical?: Record<string,unknown>; metadata?:MediaMetadata };
 type LibraryGroup = { id:string; title:string; year?:number; kind:'film'|'serie'; metadata?:MediaMetadata; versions:Array<Omit<LibraryItem,'path'>>; totalSize:number; episodeCount:number };
 type Source = { id:string; name:string; url:string; apiKey:string; categories?:string };
@@ -58,10 +61,11 @@ async function cachedJson<T>(key:string,url:string,ttlMs:number):Promise<CachedR
 }
 
 function loadDb(): Db {
-  const empty:Db={ profiles: [], library: [], ratings: [], playback: {} };
+  const empty:Db={ profiles: [], library: [], ratings: [], playback: {}, settings: {}, guests: [] };
   return {...empty,...readJson<Partial<Db>>(dbPath, empty)};
 }
 function saveDb(db: Db) { atomicWriteJson(dbPath, db); }
+function purgeExpiredGuests(clearEphemeral=false){const db=loadDb();const now=Date.now();const keep=db.guests.filter(guest=>(!clearEphemeral||!guest.ephemeral)&&(guest.expiresAt===null||guest.expiresAt>now));if(keep.length===db.guests.length)return;const removed=new Set(db.guests.filter(guest=>!keep.includes(guest)).map(guest=>guest.id));db.ratings=db.ratings.filter(rating=>!removed.has(rating.profileId));for(const key of Object.keys(db.playback))if(removed.has(key.slice(0,key.indexOf(':'))))delete db.playback[key];db.guests=keep;saveDb(db)}
 function hashPin(pin:string){const salt=randomBytes(16);const digest=scryptSync(pin,salt,32);return`${salt.toString('hex')}:${digest.toString('hex')}`}
 function verifyPin(pin:string,stored:string){try{const[saltHex,digestHex]=stored.split(':');const expected=Buffer.from(digestHex,'hex');const actual=scryptSync(pin,Buffer.from(saltHex,'hex'),expected.length);return timingSafeEqual(actual,expected)}catch{return false}}
 function safeAvatar(value:string|undefined,fallback:string){return value&&(/^\/assets\/avatars\/[a-z0-9-]+\.png$/i.test(value)||/^[\p{L}\p{N}]$/u.test(value))?value:fallback}
@@ -158,6 +162,10 @@ function cacheStats(){try{const files=readdirSync(cacheDir);let bytes=0;for(cons
 app.get('/api/cache',async()=>cacheStats());
 app.delete('/api/cache',async()=>{let removed=0;try{for(const file of readdirSync(cacheDir)){try{rmSync(join(cacheDir,file));removed++}catch{/* ignore */}}}catch{/* dossier absent */}return{ok:true,removed}});
 app.get('/api/storage',async()=>mediaRoots.filter(existsSync).map(root=>{const s=statfsSync(root);return{root,total:s.blocks*s.bsize,free:s.bfree*s.bsize,available:s.bavail*s.bsize,libraryBytes:loadDb().library.filter(x=>isWithin(root,x.path)).reduce((n,x)=>n+x.size,0)}}));
+app.get('/api/settings',async()=>{const s=loadDb().settings;return{minFreeGb:s.minFreeGb??Number(process.env.SCENEROOT_MIN_FREE_GB??50),preferredQuality:s.preferredQuality??'1080p',preferredLanguages:s.preferredLanguages??['multi','truefrench','vff','french'],preferHdr:Boolean(s.preferHdr),envSources:envSources().map(source=>({id:source.id,name:source.name})),sources:(s.torznabSources??[]).map(maskSource)}});
+app.put<{Body:Partial<Settings>}>('/api/settings',{schema:{body:{type:'object',properties:{minFreeGb:{type:'number',minimum:0,maximum:100000},preferredQuality:{type:'string'},preferredLanguages:{type:'array',items:{type:'string'}},preferHdr:{type:'boolean'}}}}},async request=>{const db=loadDb();if(request.body.minFreeGb!==undefined)db.settings.minFreeGb=Number(request.body.minFreeGb);if(request.body.preferredQuality!==undefined)db.settings.preferredQuality=String(request.body.preferredQuality);if(Array.isArray(request.body.preferredLanguages))db.settings.preferredLanguages=request.body.preferredLanguages.map(String);if(request.body.preferHdr!==undefined)db.settings.preferHdr=Boolean(request.body.preferHdr);saveDb(db);return{ok:true}});
+app.post<{Body:Partial<TorznabSource>}>('/api/sources',{schema:{body:{type:'object',required:['name','url'],properties:{name:{type:'string'},url:{type:'string'},apiKey:{type:'string'},categories:{type:'string'}}}}},async(request,reply)=>{const source=sanitizeSource(request.body,randomUUID());if(!source)return reply.code(400).send({error:'Source invalide : nom et URL http(s) requis'});const db=loadDb();db.settings.torznabSources=[...(db.settings.torznabSources??[]),source];saveDb(db);return reply.code(201).send(maskSource(source))});
+app.delete<{Params:{id:string}}>('/api/sources/:id',async request=>{const db=loadDb();const list=db.settings.torznabSources??[];const before=list.length;db.settings.torznabSources=list.filter(source=>source.id!==request.params.id);saveDb(db);return{ok:true,removed:before-(db.settings.torznabSources?.length??0)}});
 app.get<{Params:{id:string}}>('/api/media/:id', async (request, reply) => {
   const item=loadDb().library.find(x=>x.id===request.params.id); if(!item) return reply.code(404).send({error:'Média introuvable'});
   if(!isWithinRoots(item.path)) return reply.code(403).send({error:'Chemin non autorisé'});
@@ -179,16 +187,25 @@ app.post<{Body:{profileIds:string[];candidates:Array<{id:string;genres:string[];
   const ageLimits=Object.fromEntries(db.profiles.map(profile=>[profile.id,profile.ageLimit]));
   return recommendGroup(profileIds,candidates,{ratings:db.ratings,playback,genresOf,ageLimits},request.body.preferUnseen!==false);
 });
-app.post<{Body:{ttl:'shutdown'|'24h'|'7d'|'permanent';ageLimit:number}}>('/api/guests',async request=>({id:`guest-${Date.now()}`,temporary:request.body.ttl!=='permanent',expiresAt:request.body.ttl==='24h'?Date.now()+86400000:request.body.ttl==='7d'?Date.now()+604800000:null,ageLimit:request.body.ageLimit}));
+app.post<{Body:{ttl:'shutdown'|'24h'|'7d'|'permanent';ageLimit:number}}>('/api/guests',{schema:{body:{type:'object',required:['ttl'],properties:{ttl:{type:'string',enum:['shutdown','24h','7d','permanent']},ageLimit:{type:'number'}}}}},async request=>{
+  const ageLimit=Math.max(0,Math.min(18,Number(request.body.ageLimit??18)));
+  if(request.body.ttl==='permanent'){const db=loadDb();const profile:ProfileRecord={id:randomUUID(),name:'Invité',ageLimit,avatar:'I',accent:'#a78bfa',createdAt:new Date().toISOString()};db.profiles.push(profile);saveDb(db);return{id:profile.id,temporary:false,expiresAt:null,ageLimit,profile:true}}
+  const expiresAt=request.body.ttl==='24h'?Date.now()+86400000:request.body.ttl==='7d'?Date.now()+604800000:null;
+  const session:GuestSession={id:randomUUID(),ageLimit,createdAt:new Date().toISOString(),expiresAt,ephemeral:request.body.ttl==='shutdown'};
+  const db=loadDb();db.guests.push(session);saveDb(db);
+  return{id:session.id,temporary:true,expiresAt,ageLimit};
+});
+app.get<{Params:{id:string}}>('/api/guests/:id',async(request,reply)=>{purgeExpiredGuests();const session=loadDb().guests.find(guest=>guest.id===request.params.id);if(!session)return reply.code(404).send({error:'Session invité expirée ou introuvable'});return session});
 
-function sources():Source[]{const configured:Source[]=[];if(process.env.C411_API_KEY)configured.push({id:'c411',name:'C411',url:'https://c411.org/api/torznab',apiKey:process.env.C411_API_KEY,categories:'2000,5000'});try{configured.push(...JSON.parse(process.env.SCENEROOT_TORZNAB_SOURCES??'[]'))}catch{}return configured}
+function envSources():Source[]{const configured:Source[]=[];if(process.env.C411_API_KEY)configured.push({id:'c411',name:'C411',url:'https://c411.org/api/torznab',apiKey:process.env.C411_API_KEY,categories:'2000,5000'});try{configured.push(...JSON.parse(process.env.SCENEROOT_TORZNAB_SOURCES??'[]'))}catch{}return configured}
+function sources():Source[]{return[...envSources(),...(loadDb().settings.torznabSources??[])]}
 function xmlText(block:string,tag:string){const m=block.match(new RegExp(`<${tag}[^>]*>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?</${tag}>`,'i'));return m?.[1]?.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>')}
 app.get<{Querystring:{q:string;kind?:'movie'|'tv';season?:string;episode?:string}}>('/api/sources/search',async(request,reply)=>{if(!request.query.q)return reply.code(400).send({error:'Recherche manquante'});const results=[];for(const source of sources()){const url=new URL(source.url);url.searchParams.set('apikey',source.apiKey);url.searchParams.set('t',request.query.kind==='tv'?'tvsearch':request.query.kind==='movie'?'movie':'search');url.searchParams.set('q',request.query.q);if(source.categories)url.searchParams.set('cat',source.categories);if(request.query.season)url.searchParams.set('season',request.query.season);if(request.query.episode)url.searchParams.set('ep',request.query.episode);try{const res=await fetch(url,{signal:AbortSignal.timeout(10000)});const xml=await res.text();for(const block of xml.match(/<item>[\s\S]*?<\/item>/gi)??[]){results.push({source:source.name,title:xmlText(block,'title'),link:xmlText(block,'link')??xmlText(block,'guid'),size:Number(xmlText(block,'size')??0),seeders:Number(block.match(/name="seeders"[^>]*value="(\d+)"/i)?.[1]??0),published:xmlText(block,'pubDate')})}}catch(error){app.log.warn({source:source.name,error},'Torznab source failed')}}return results});
 
 async function transmission(method:string,args:Record<string,unknown>){const rpc=process.env.TRANSMISSION_RPC_URL;if(!rpc)throw Object.assign(new Error('Configurez TRANSMISSION_RPC_URL'),{statusCode:503});const auth=process.env.TRANSMISSION_RPC_AUTH;const headers:Record<string,string>={'Content-Type':'application/json'};if(auth)headers.Authorization=`Basic ${Buffer.from(auth).toString('base64')}`;const body=JSON.stringify({method,arguments:args});let response=await fetch(rpc,{method:'POST',headers,body,signal:AbortSignal.timeout(10000)});if(response.status===409){headers['X-Transmission-Session-Id']=response.headers.get('x-transmission-session-id')??'';response=await fetch(rpc,{method:'POST',headers,body,signal:AbortSignal.timeout(10000)})}return response}
 app.post<{Body:{magnet:string;expectedBytes?:number}}>('/api/downloads', {schema:{body:{type:'object',required:['magnet'],properties:{magnet:{type:'string',minLength:8},expectedBytes:{type:'number',minimum:0}}}}}, async (request,reply)=>{
   if(!request.body.magnet?.startsWith('magnet:?')) return reply.code(400).send({error:'Lien magnet invalide'});
-  const targetRoot=mediaRoots.find(existsSync)??dataDir;const disk=statfsSync(targetRoot);const available=disk.bavail*disk.bsize;const reserve=Number(process.env.SCENEROOT_MIN_FREE_GB??50)*1024**3;if(available-(request.body.expectedBytes??0)<reserve)return reply.code(507).send({error:'Espace disque insuffisant',available,reserve,expectedBytes:request.body.expectedBytes??0});
+  const targetRoot=mediaRoots.find(existsSync)??dataDir;const disk=statfsSync(targetRoot);const available=disk.bavail*disk.bsize;const reserve=Number(loadDb().settings.minFreeGb??process.env.SCENEROOT_MIN_FREE_GB??50)*1024**3;if(available-(request.body.expectedBytes??0)<reserve)return reply.code(507).send({error:'Espace disque insuffisant',available,reserve,expectedBytes:request.body.expectedBytes??0});
   try{const response=await transmission('torrent-add',{filename:request.body.magnet});return reply.code(response.ok?200:502).send(await response.json())}catch(error){return reply.code((error as {statusCode?:number}).statusCode??503).send({error:(error as Error).message})}
 });
 app.get('/api/downloads', async (_request,reply)=>{try{const response=await transmission('torrent-get',{fields:['id','name','percentDone','rateDownload','rateUpload','status','totalSize','sizeWhenDone','eta','errorString','downloadDir','peersConnected']});if(!response.ok)return reply.code(502).send({error:'Transmission indisponible'});const payload=await response.json() as {arguments?:{torrents?:unknown[]}};return payload.arguments?.torrents??[]}catch(error){return reply.code((error as {statusCode?:number}).statusCode??503).send({error:(error as Error).message})}});
@@ -209,4 +226,6 @@ if(existsSync(dist)){
   app.setNotFoundHandler((request,reply)=>request.url.startsWith('/api/')?reply.code(404).send({error:'Route inconnue'}):reply.sendFile('index.html'));
 }
 await app.listen({port,host:'0.0.0.0'});
+try{purgeExpiredGuests(true)}catch(error){app.log.warn({error},'Guest purge at startup failed')}
+setInterval(()=>{try{purgeExpiredGuests()}catch(error){app.log.warn({error},'Guest purge failed')}},5*60_000).unref();
 if(process.env.SCENEROOT_WATCH!=='false'){scanLibrary().catch(error=>app.log.warn({error},'Initial media scan failed'));setInterval(()=>scanLibrary().catch(error=>app.log.warn({error},'Background media scan failed')),60_000).unref()}
