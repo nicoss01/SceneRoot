@@ -58,9 +58,9 @@ function Section({ title, items, onOpen, wide = false }: { title: string; items:
   return <section><div className="section-title"><h2>{title}</h2><button>Tout voir <ChevronRight size={18}/></button></div><div className="rail">{items.map((m, i) => <MediaCard key={m.id} item={m} active={i === 0} wide={wide} onOpen={() => onOpen(m)} />)}</div></section>;
 }
 
-function RemoteSection({ title, fallback, onOpen }: { title:string; fallback:MediaItem[]; onOpen:(item:MediaItem)=>void }) {
+function RemoteSection({ title, fallback, onOpen, kind }: { title:string; fallback:MediaItem[]; onOpen:(item:MediaItem)=>void; kind?:'film'|'serie' }) {
   const sectionRef=useRef<HTMLElement>(null);const[visible,setVisible]=useState(false);
-  const {items,loading,source}=useCatalog(undefined,6,visible);
+  const {items,loading,source}=useCatalog(kind,6,visible);
   useEffect(()=>{const node=sectionRef.current;if(!node)return;const observer=new IntersectionObserver(entries=>{if(entries[0]?.isIntersecting){setVisible(true);observer.disconnect()}},{rootMargin:'320px'});observer.observe(node);return()=>observer.disconnect()},[]);
   const displayed=items.length?items:fallback;
   return <section ref={sectionRef}><div className="section-title"><h2>{title}</h2><span>{loading?'Chargement…':source?`Source : ${source}`:''}</span></div><div className="rail">{displayed.map((item,index)=><MediaCard key={item.id} item={item} active={index===0} onOpen={()=>onOpen(item)}/>)}</div></section>;
@@ -73,7 +73,8 @@ function HomePage({profile}:{profile:Profile}) {
     <div className="welcome home-welcome"><h1>Bonsoir, {profile.name}</h1><p>De belles histoires vous attendent.</p></div>
     {resume.items.length>0&&<Section title="Reprendre la lecture" items={resume.items.slice(0,6)} onOpen={open} wide />}
     <RemoteSection title="Dernières sorties" fallback={media.slice(4,10)} onOpen={open} />
-    <Section title="Recommandé pour vous" items={media.slice(8).concat(media.slice(1,3))} onOpen={open} />
+    <RemoteSection title="Films à découvrir" fallback={media.filter(m=>m.kind==='film').slice(0,6)} onOpen={open} kind="film" />
+    <RemoteSection title="Séries à découvrir" fallback={media.filter(m=>m.kind==='serie').slice(0,6)} onOpen={open} kind="serie" />
     <section><div className="section-title"><h2>Explorer par genre</h2><span>{allGenres.length} genres films et séries</span></div><div className="genres">{allGenres.map((label,i) => {const Icon=i%4===0?Film:i%4===1?Tv:i%4===2?Sparkles:Heart;return <button className={`genre focusable ${i===0?'is-active':''}`} key={label} onClick={()=>navigate(`/search?genre=${encodeURIComponent(label)}`)}><Icon />{label}</button>})}</div></section>
   </>;
 }
@@ -115,25 +116,46 @@ function SearchPage() {
 }
 
 type Mood = 'Détente'|'Action'|'Émotion'|'Frissons'|'Découverte';
+type ScoredMedia = { item:MediaItem; score:number; affinities:number[]; minAffinity:number };
 function TonightPage({availableProfiles}:{availableProfiles:Profile[]}) {
   const navigate=useNavigate();
+  const library=useLibrary();
   const [selected,setSelected]=useState(()=>availableProfiles.slice(0,3).map(profile=>profile.id));
-  const [kind,setKind]=useState<'film'|'serie'|'any'>('film');
-  const [duration,setDuration]=useState<'short'|'medium'|'any'>('medium');
+  const [kind,setKind]=useState<'film'|'serie'|'any'>('any');
+  const [duration,setDuration]=useState<'short'|'medium'|'any'>('any');
   const [mood,setMood]=useState<Mood>('Découverte');
   const [genre,setGenre]=useState('');
   const [choosing,setChoosing]=useState(false); const [chosen,setChosen]=useState<string|null>(null);
-  const scored=useMemo(()=>media.filter(m=>(kind==='any'||m.kind===kind)&&(!genre||m.genres.includes(genre))&&matchesDuration(m,duration)).map((m,i)=>{
-    const affinities=(selected.length?selected:['family']).map((_,p)=>Math.max(52,Math.min(98,Math.round(82+Math.sin(i*2.1+p*1.7)*12))));
-    const avg=affinities.reduce((a,b)=>a+b,0)/affinities.length;
-    const disagreement=Math.max(...affinities)-Math.min(...affinities);
-    const moodBonus=moodGenres[mood].some(value=>m.genres.includes(value))?5:0;
-    return{item:m,score:Math.round(avg-disagreement*.42+(i%3===1?4:0)+moodBonus)};
-  }).sort((a,b)=>b.score-a.score).slice(0,5),[selected,kind,duration,mood,genre]);
+  const [scored,setScored]=useState<ScoredMedia[]>([]); const [computing,setComputing]=useState(false);
+  const demoMode=!library.loading&&library.items.length===0;
+  const pool=useMemo(()=>{
+    const base=library.items.length?library.items:media;
+    return base.filter(m=>(kind==='any'||m.kind===kind)&&(!genre||m.genres.includes(genre))&&matchesDuration(m,duration));
+  },[library.items,kind,genre,duration]);
+  useEffect(()=>{
+    let active=true;
+    if(!pool.length){setScored([]);return}
+    const profileIds=selected.length?selected:['family'];
+    const candidates=pool.map(m=>({id:m.id,genres:m.genres}));
+    const byId=new Map(pool.map(m=>[m.id,m]));
+    setComputing(true);
+    (async()=>{
+      try{
+        const response=await fetch('/api/recommendations/group',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({profileIds,candidates})});
+        if(!response.ok)throw new Error();
+        const rows=await response.json() as Array<{id:string;score:number;affinities:number[]}>;
+        if(!active)return;
+        const mapped=rows.flatMap(row=>{const item=byId.get(row.id);if(!item)return[];const bonus=moodGenres[mood].some(value=>item.genres.includes(value))?5:0;const affinities=row.affinities??[];return[{item,score:Math.max(0,Math.min(100,row.score+bonus)),affinities,minAffinity:affinities.length?Math.round(Math.min(...affinities)):row.score}]});
+        setScored(mapped.sort((a,b)=>b.score-a.score).slice(0,5));
+      }catch{if(active)setScored([])}finally{if(active)setComputing(false)}
+    })();
+    return()=>{active=false};
+  },[pool,selected,mood]);
   const pick=()=>{setChoosing(true);setChosen(null);setTimeout(()=>{setChosen(scored[Math.floor(Math.random()*Math.min(3,scored.length))]?.item.id??null);setChoosing(false)},1100)};
-  return <><div className="tonight-head"><div className="welcome"><h1>Que regarde-t-on ce soir ?</h1><p>SceneRoot cherche le meilleur compromis, pas la moyenne la plus facile.</p></div><button className="primary magic" onClick={pick}><WandSparkles/>{choosing?'Choix en cours…':'Faites le choix pour nous'}</button></div>
+  return <><div className="tonight-head"><div className="welcome"><h1>Que regarde-t-on ce soir ?</h1><p>SceneRoot cherche le meilleur compromis, pas la moyenne la plus facile.</p></div><button className="primary magic" onClick={pick} disabled={!scored.length}><WandSparkles/>{choosing?'Choix en cours…':'Faites le choix pour nous'}</button></div>
+    {demoMode&&<div className="player-note" style={{margin:'0 0 12px'}}>Mode démonstration : aucune bibliothèque locale indexée, propositions issues d’un catalogue fictif.</div>}
     <div className="chooser"><FilterGroup title="Profils">{availableProfiles.map(p=><button className={selected.includes(p.id)?'on':''} onClick={()=>setSelected(s=>s.includes(p.id)?s.filter(x=>x!==p.id):[...s,p.id])} key={p.id}>{p.name}{selected.includes(p.id)&&<Check/>}</button>)}</FilterGroup><FilterGroup title="Envie">{(['film','serie','any'] as const).map(v=><button className={kind===v?'on':''} onClick={()=>setKind(v)} key={v}>{v==='film'?'Film':v==='serie'?'Série':'Peu importe'}</button>)}</FilterGroup><FilterGroup title="Durée">{([['short','< 1h30'],['medium','1h30–2h'],['any','Peu importe']] as const).map(([v,l])=><button className={duration===v?'on':''} onClick={()=>setDuration(v)} key={v}>{l}</button>)}</FilterGroup><FilterGroup title="Ambiance">{(['Détente','Action','Émotion','Frissons','Découverte'] as Mood[]).map(v=><button className={mood===v?'on':''} onClick={()=>setMood(v)} key={v}>{v}</button>)}</FilterGroup><label className="tonight-genre"><strong>Genre</strong><select value={genre} onChange={event=>setGenre(event.target.value)}><option value="">Tous les genres</option>{allGenres.map(value=><option value={value} key={value}>{value}</option>)}</select></label></div>
-    <div className="match-list">{scored.map((x,i)=><button className={`match-card ${chosen===x.item.id?'winner':''}`} key={x.item.id} onClick={()=>navigate(`/title/${x.item.id}`)}><div className="match-rank">{i+1}</div><div className="match-art" style={{'--a':x.item.palette[0],'--b':x.item.palette[1]} as React.CSSProperties}>{x.item.symbol}</div><div className="match-copy"><h3>{x.item.title}</h3><strong>{x.score} % compatible</strong><p>✓ {selectedProfileNames(selected,availableProfiles)} · ✓ pénalité appliquée aux désaccords · ✓ compatible avec les limites d’âge · {x.item.duration}</p></div><ChevronRight/></button>)}{!scored.length&&<div className="empty-recommendations"><Sparkles/><h3>Aucun titre avec ces contraintes</h3><p>Essayez « Peu importe » pour la durée ou choisissez un autre genre.</p></div>}</div>
+    <div className="match-list">{scored.map((x,i)=><button className={`match-card ${chosen===x.item.id?'winner':''}`} key={x.item.id} onClick={()=>navigate(`/title/${x.item.id}`)}><div className="match-rank">{i+1}</div><div className="match-art" style={{'--a':x.item.palette[0],'--b':x.item.palette[1]} as React.CSSProperties}>{x.item.symbol}</div><div className="match-copy"><h3>{x.item.title}</h3><strong>{x.score} % compatible</strong><p>✓ {selectedProfileNames(selected,availableProfiles)} · ✓ satisfaction minimale {x.minAffinity}% · ✓ pénalité appliquée aux désaccords · {x.item.duration}</p></div><ChevronRight/></button>)}{!scored.length&&!computing&&<div className="empty-recommendations"><Sparkles/><h3>Aucun titre avec ces contraintes</h3><p>Essayez « Peu importe » pour la durée ou choisissez un autre genre.</p></div>}{computing&&!scored.length&&<div className="library-loading"><i/>Calcul du meilleur compromis…</div>}</div>
   </>;
 }
 const moodGenres:Record<Mood,string[]>={Détente:['Comédie','Famille','Animation'],Action:['Action','Aventure','Action & aventure'],Émotion:['Drame','Romance'],Frissons:['Horreur','Thriller','Mystère'],Découverte:['Documentaire','Histoire','Science-fiction']};
