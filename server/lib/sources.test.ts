@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { maskSource, sanitizeSource } from './sources.js';
+import { maskSource, normalizeTorznabUrl, sanitizeSource } from './sources.js';
+
+describe('normalizeTorznabUrl', () => {
+  it('completes a bare site address with the Torznab endpoint', () => {
+    expect(normalizeTorznabUrl('https://c411.org')).toBe('https://c411.org/api/torznab');
+    expect(normalizeTorznabUrl(' https://c411.org/ ')).toBe('https://c411.org/api/torznab');
+  });
+  it('keeps an explicit endpoint untouched apart from a trailing slash', () => {
+    expect(normalizeTorznabUrl('https://c411.org/api/torznab')).toBe('https://c411.org/api/torznab');
+    expect(normalizeTorznabUrl('http://127.0.0.1:9117/api/v2.0/indexers/c411/results/torznab/')).toBe('http://127.0.0.1:9117/api/v2.0/indexers/c411/results/torznab');
+  });
+  it('leaves a non-http value alone', () => {
+    expect(normalizeTorznabUrl('pas-une-url')).toBe('pas-une-url');
+  });
+});
 
 describe('sanitizeSource', () => {
   it('accepts a valid http(s) source and trims fields', () => {
