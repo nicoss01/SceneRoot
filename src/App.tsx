@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Route, Routes, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, BarChart3, Check, ChevronRight, Clock3, Download, Film, FolderOpen, Gauge, HardDrive, Heart, Hourglass, Lock, Monitor, Pause, Pencil, Play, Plus, RefreshCw, RotateCcw, Search, ShieldCheck, Sparkles, Star, Subtitles, Timer, Tv, Users, Volume2, Wifi, WandSparkles, X } from 'lucide-react';
+import { ArrowLeft, BarChart3, Check, ChevronRight, Clock3, Download, Film, FolderOpen, HardDrive, Heart, Hourglass, Lock, Monitor, Pause, Pencil, Play, Plus, RefreshCw, RotateCcw, Search, ShieldCheck, Sparkles, Star, Subtitles, Timer, Trash2, Tv, Users, Volume2, Wifi, WandSparkles, X } from 'lucide-react';
 import { Brand } from './components/Brand';
 import { MediaCard } from './components/MediaCard';
 import { MetadataMatcher } from './components/MetadataMatcher';
@@ -12,7 +12,17 @@ import { resolveMedia } from './data/catalog';
 import { allGenres } from './data/genres';
 import { useCatalog } from './hooks/useCatalog';
 import { useLibrary } from './hooks/useLibrary';
-import type { MediaItem, Profile } from './types';
+import { useHistory, useResume } from './hooks/usePlaybackHistory';
+import { useLibraryGroup } from './hooks/useLibraryGroup';
+import { DownloadPanel } from './components/DownloadPanel';
+import { useDownloads } from './hooks/useDownloads';
+import type { MediaItem, PlayerStatus, Profile } from './types';
+
+function formatTime(seconds: number) {
+  const total = Math.max(0, Math.floor(seconds || 0));
+  const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), s = total % 60;
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
+}
 
 function BootScreen() {
   return <div className="boot-screen">
@@ -51,9 +61,9 @@ function Section({ title, items, onOpen, wide = false }: { title: string; items:
   return <section><div className="section-title"><h2>{title}</h2><button>Tout voir <ChevronRight size={18}/></button></div><div className="rail">{items.map((m, i) => <MediaCard key={m.id} item={m} active={i === 0} wide={wide} onOpen={() => onOpen(m)} />)}</div></section>;
 }
 
-function RemoteSection({ title, fallback, onOpen }: { title:string; fallback:MediaItem[]; onOpen:(item:MediaItem)=>void }) {
+function RemoteSection({ title, fallback, onOpen, kind }: { title:string; fallback:MediaItem[]; onOpen:(item:MediaItem)=>void; kind?:'film'|'serie' }) {
   const sectionRef=useRef<HTMLElement>(null);const[visible,setVisible]=useState(false);
-  const {items,loading,source}=useCatalog(undefined,6,visible);
+  const {items,loading,source}=useCatalog(kind,6,visible);
   useEffect(()=>{const node=sectionRef.current;if(!node)return;const observer=new IntersectionObserver(entries=>{if(entries[0]?.isIntersecting){setVisible(true);observer.disconnect()}},{rootMargin:'320px'});observer.observe(node);return()=>observer.disconnect()},[]);
   const displayed=items.length?items:fallback;
   return <section ref={sectionRef}><div className="section-title"><h2>{title}</h2><span>{loading?'Chargement…':source?`Source : ${source}`:''}</span></div><div className="rail">{displayed.map((item,index)=><MediaCard key={item.id} item={item} active={index===0} onOpen={()=>onOpen(item)}/>)}</div></section>;
@@ -61,11 +71,13 @@ function RemoteSection({ title, fallback, onOpen }: { title:string; fallback:Med
 
 function HomePage({profile}:{profile:Profile}) {
   const navigate = useNavigate(); const open = (m: MediaItem) => navigate(`/title/${m.id}`);
+  const resume = useResume(profile.id);
   return <>
     <div className="welcome home-welcome"><h1>Bonsoir, {profile.name}</h1><p>De belles histoires vous attendent.</p></div>
-    <Section title="Reprendre la lecture" items={media.slice(0,4)} onOpen={open} wide />
+    {resume.items.length>0&&<Section title="Reprendre la lecture" items={resume.items.slice(0,6)} onOpen={open} wide />}
     <RemoteSection title="Dernières sorties" fallback={media.slice(4,10)} onOpen={open} />
-    <Section title="Recommandé pour vous" items={media.slice(8).concat(media.slice(1,3))} onOpen={open} />
+    <RemoteSection title="Films à découvrir" fallback={media.filter(m=>m.kind==='film').slice(0,6)} onOpen={open} kind="film" />
+    <RemoteSection title="Séries à découvrir" fallback={media.filter(m=>m.kind==='serie').slice(0,6)} onOpen={open} kind="serie" />
     <section><div className="section-title"><h2>Explorer par genre</h2><span>{allGenres.length} genres films et séries</span></div><div className="genres">{allGenres.map((label,i) => {const Icon=i%4===0?Film:i%4===1?Tv:i%4===2?Sparkles:Heart;return <button className={`genre focusable ${i===0?'is-active':''}`} key={label} onClick={()=>navigate(`/search?genre=${encodeURIComponent(label)}`)}><Icon />{label}</button>})}</div></section>
   </>;
 }
@@ -90,57 +102,112 @@ function LibraryPage() {
 
 function SearchPage() {
   const params=new URLSearchParams(location.search);const initialGenre=params.get('genre')??'';
-  const [query, setQuery] = useState(initialGenre?'':'planète'); const [selectedGenre,setSelectedGenre]=useState(initialGenre);const[type,setType]=useState<'all'|'film'|'serie'>('all'); const navigate = useNavigate();
+  const [query, setQuery] = useState(initialGenre?'':'planète'); const [debouncedQuery,setDebouncedQuery]=useState(query);const [selectedGenre,setSelectedGenre]=useState(initialGenre);const[type,setType]=useState<'all'|'film'|'serie'>('all'); const navigate = useNavigate();const sentinel=useRef<HTMLDivElement>(null);
+  useEffect(()=>{const timer=setTimeout(()=>setDebouncedQuery(query.trim()),320);return()=>clearTimeout(timer)},[query]);
+  const catalog=useCatalog(type==='all'?undefined:type,20,true,selectedGenre,debouncedQuery);
   const normalized=query.toLowerCase();
-  const results = media.filter(m => (type==='all'||m.kind===type)&&(!selectedGenre||m.genres.includes(selectedGenre))&&(!query || `${m.title} ${m.genres.join(' ')}`.toLowerCase().includes(normalized) || (normalized.includes('planète')&&m.genres.includes('Science-fiction'))));
+  const localResults = media.filter(m => (type==='all'||m.kind===type)&&(!selectedGenre||m.genres.includes(selectedGenre))&&(!query || `${m.title} ${m.genres.join(' ')}`.toLowerCase().includes(normalized) || (normalized.includes('planète')&&m.genres.includes('Science-fiction'))));
+  const results=catalog.items.length?catalog.items:localResults;
+  useEffect(()=>{const node=sentinel.current;if(!node)return;const observer=new IntersectionObserver(entries=>{if(entries[0]?.isIntersecting&&!catalog.loading&&catalog.hasMore)void catalog.loadMore()},{rootMargin:'420px'});observer.observe(node);return()=>observer.disconnect()},[catalog.hasMore,catalog.loadMore,catalog.loading]);
   const reset=()=>{setQuery('');setSelectedGenre('');setType('all')};
   return <><label className="searchbox"><Search/><input autoFocus value={query} onChange={e=>setQuery(e.target.value)} placeholder="Rechercher un film ou une série…"/><kbd>OK</kbd></label>
     <div className="search-filter-title"><h2>Filtres</h2><button onClick={reset}><RefreshCw/> Réinitialiser les filtres</button></div>
     <div className="search-filters"><div className="filter-panel"><h3><Film/>Type</h3><div>{([['all','Tous'],['film','Films'],['serie','Séries']] as const).map(([value,label])=><button className={type===value?'on':''} onClick={()=>setType(value)} key={value}>{label}</button>)}</div></div><div className="filter-panel"><h3><Timer/>Durée</h3><div><button>&lt; 1h30</button><button className="on">1h30 – 2h</button><button>&gt; 2h</button></div></div><div className="filter-panel"><h3><Star/>Notes utilisateurs</h3><div><button>≥ 5</button><button className="on">≥ 7</button><button>≥ 8</button></div></div><div className="filter-panel"><h3><Monitor/>Qualité</h3><div><button>720p</button><button className="on">1080p</button><button>4K</button></div></div></div>
     <div className="genre-filter"><h3><Sparkles/>Tous les genres</h3><div>{allGenres.map(genre=><button className={selectedGenre===genre?'on':''} onClick={()=>setSelectedGenre(current=>current===genre?'':genre)} key={genre}>{genre}</button>)}</div></div>
-    <div className="section-title"><h2>{query?`Résultats pour « ${query} »`:selectedGenre||'Tous les contenus'}</h2><span>{results.length} résultats</span></div>
-    <div className="grid">{results.map((m,i)=><MediaCard item={m} active={i===0} key={m.id} onOpen={()=>navigate(`/title/${m.id}`)}/>)}</div></>;
+    <div className="section-title"><h2>{query?`Résultats pour « ${query} »`:selectedGenre||'Tous les contenus'}</h2><span>{catalog.source?`${results.length} résultats · ${catalog.source}`:`${results.length} résultats`}</span></div>
+    <div className="grid">{results.map((m,i)=><MediaCard item={m} active={i===0} key={m.id} onOpen={()=>navigate(`/title/${m.id}`)}/>)}</div><div className="catalog-sentinel" ref={sentinel}>{catalog.loading&&<><i/>Recherche dans le catalogue…</>}{catalog.error&&<button className="secondary" onClick={()=>catalog.loadMore()}>Réessayer</button>}{!catalog.loading&&!results.length&&<span>Aucun titre ne correspond encore à ces filtres.</span>}</div></>;
 }
 
 type Mood = 'Détente'|'Action'|'Émotion'|'Frissons'|'Découverte';
-function TonightPage() {
+type ScoredMedia = { item:MediaItem; score:number; affinities:number[]; minAffinity:number; seenCount:number };
+function TonightPage({availableProfiles}:{availableProfiles:Profile[]}) {
   const navigate=useNavigate();
-  const [selected,setSelected]=useState(['nicolas','cathy','nathan']);
-  const [kind,setKind]=useState<'film'|'serie'|'any'>('film');
-  const [duration,setDuration]=useState<'short'|'medium'|'any'>('medium');
+  const library=useLibrary();
+  const [selected,setSelected]=useState(()=>availableProfiles.slice(0,3).map(profile=>profile.id));
+  const [kind,setKind]=useState<'film'|'serie'|'any'>('any');
+  const [duration,setDuration]=useState<'short'|'medium'|'any'>('any');
   const [mood,setMood]=useState<Mood>('Découverte');
   const [genre,setGenre]=useState('');
   const [choosing,setChoosing]=useState(false); const [chosen,setChosen]=useState<string|null>(null);
-  const scored=useMemo(()=>media.filter(m=>(kind==='any'||m.kind===kind)&&(!genre||m.genres.includes(genre))).map((m,i)=>{
-    const affinities=selected.map((_,p)=>Math.max(52,Math.min(98,Math.round(82+Math.sin(i*2.1+p*1.7)*12))));
-    const avg=affinities.reduce((a,b)=>a+b,0)/affinities.length;
-    const disagreement=Math.max(...affinities)-Math.min(...affinities);
-    return{item:m,score:Math.round(avg-disagreement*.42+(i%3===1?4:0))};
-  }).sort((a,b)=>b.score-a.score).slice(0,5),[selected,kind,duration,mood,genre]);
+  const [scored,setScored]=useState<ScoredMedia[]>([]); const [computing,setComputing]=useState(false);
+  const demoMode=!library.loading&&library.items.length===0;
+  const pool=useMemo(()=>{
+    const base=library.items.length?library.items:media;
+    return base.filter(m=>(kind==='any'||m.kind===kind)&&(!genre||m.genres.includes(genre))&&matchesDuration(m,duration));
+  },[library.items,kind,genre,duration]);
+  useEffect(()=>{
+    let active=true;
+    if(!pool.length){setScored([]);return}
+    const profileIds=selected.length?selected:['family'];
+    const candidates=pool.map(m=>({id:m.id,genres:m.genres}));
+    const byId=new Map(pool.map(m=>[m.id,m]));
+    setComputing(true);
+    (async()=>{
+      try{
+        const response=await fetch('/api/recommendations/group',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({profileIds,candidates})});
+        if(!response.ok)throw new Error();
+        const rows=await response.json() as Array<{id:string;score:number;affinities:number[];seenBy?:string[]}>;
+        if(!active)return;
+        const mapped=rows.flatMap(row=>{const item=byId.get(row.id);if(!item)return[];const bonus=moodGenres[mood].some(value=>item.genres.includes(value))?5:0;const affinities=row.affinities??[];return[{item,score:Math.max(0,Math.min(100,row.score+bonus)),affinities,minAffinity:affinities.length?Math.round(Math.min(...affinities)):row.score,seenCount:row.seenBy?.length??0}]});
+        setScored(mapped.sort((a,b)=>b.score-a.score).slice(0,5));
+      }catch{if(active)setScored([])}finally{if(active)setComputing(false)}
+    })();
+    return()=>{active=false};
+  },[pool,selected,mood]);
   const pick=()=>{setChoosing(true);setChosen(null);setTimeout(()=>{setChosen(scored[Math.floor(Math.random()*Math.min(3,scored.length))]?.item.id??null);setChoosing(false)},1100)};
-  return <><div className="tonight-head"><div className="welcome"><h1>Que regarde-t-on ce soir ?</h1><p>SceneRoot cherche le meilleur compromis, pas la moyenne la plus facile.</p></div><button className="primary magic" onClick={pick}><WandSparkles/>{choosing?'Choix en cours…':'Faites le choix pour nous'}</button></div>
-    <div className="chooser"><FilterGroup title="Profils">{profiles.map(p=><button className={selected.includes(p.id)?'on':''} onClick={()=>setSelected(s=>s.includes(p.id)?s.filter(x=>x!==p.id):[...s,p.id])} key={p.id}>{p.name}{selected.includes(p.id)&&<Check/>}</button>)}</FilterGroup><FilterGroup title="Envie">{(['film','serie','any'] as const).map(v=><button className={kind===v?'on':''} onClick={()=>setKind(v)} key={v}>{v==='film'?'Film':v==='serie'?'Série':'Peu importe'}</button>)}</FilterGroup><FilterGroup title="Durée">{([['short','< 1h30'],['medium','1h30–2h'],['any','Peu importe']] as const).map(([v,l])=><button className={duration===v?'on':''} onClick={()=>setDuration(v)} key={v}>{l}</button>)}</FilterGroup><FilterGroup title="Ambiance">{(['Détente','Action','Émotion','Frissons','Découverte'] as Mood[]).map(v=><button className={mood===v?'on':''} onClick={()=>setMood(v)} key={v}>{v}</button>)}</FilterGroup><label className="tonight-genre"><strong>Genre</strong><select value={genre} onChange={event=>setGenre(event.target.value)}><option value="">Tous les genres</option>{allGenres.map(value=><option value={value} key={value}>{value}</option>)}</select></label></div>
-    <div className="match-list">{scored.map((x,i)=><button className={`match-card ${chosen===x.item.id?'winner':''}`} key={x.item.id} onClick={()=>navigate(`/title/${x.item.id}`)}><div className="match-rank">{i+1}</div><div className="match-art" style={{'--a':x.item.palette[0],'--b':x.item.palette[1]} as React.CSSProperties}>{x.item.symbol}</div><div className="match-copy"><h3>{x.item.title}</h3><strong>{x.score} % compatible</strong><p>✓ Nicolas aime fortement {x.item.genres[0].toLowerCase()} · ✓ Cathy a bien noté des titres proches · ✓ Nathan ne l’a jamais vu · ✓ compatible avec les limites d’âge · {x.item.duration}</p></div><ChevronRight/></button>)}</div>
+  return <><div className="tonight-head"><div className="welcome"><h1>Que regarde-t-on ce soir ?</h1><p>SceneRoot cherche le meilleur compromis, pas la moyenne la plus facile.</p></div><button className="primary magic" onClick={pick} disabled={!scored.length}><WandSparkles/>{choosing?'Choix en cours…':'Faites le choix pour nous'}</button></div>
+    {demoMode&&<div className="player-note" style={{margin:'0 0 12px'}}>Mode démonstration : aucune bibliothèque locale indexée, propositions issues d’un catalogue fictif.</div>}
+    <div className="chooser"><FilterGroup title="Profils">{availableProfiles.map(p=><button className={selected.includes(p.id)?'on':''} onClick={()=>setSelected(s=>s.includes(p.id)?s.filter(x=>x!==p.id):[...s,p.id])} key={p.id}>{p.name}{selected.includes(p.id)&&<Check/>}</button>)}</FilterGroup><FilterGroup title="Envie">{(['film','serie','any'] as const).map(v=><button className={kind===v?'on':''} onClick={()=>setKind(v)} key={v}>{v==='film'?'Film':v==='serie'?'Série':'Peu importe'}</button>)}</FilterGroup><FilterGroup title="Durée">{([['short','< 1h30'],['medium','1h30–2h'],['any','Peu importe']] as const).map(([v,l])=><button className={duration===v?'on':''} onClick={()=>setDuration(v)} key={v}>{l}</button>)}</FilterGroup><FilterGroup title="Ambiance">{(['Détente','Action','Émotion','Frissons','Découverte'] as Mood[]).map(v=><button className={mood===v?'on':''} onClick={()=>setMood(v)} key={v}>{v}</button>)}</FilterGroup><label className="tonight-genre"><strong>Genre</strong><select value={genre} onChange={event=>setGenre(event.target.value)}><option value="">Tous les genres</option>{allGenres.map(value=><option value={value} key={value}>{value}</option>)}</select></label></div>
+    <div className="match-list">{scored.map((x,i)=><button className={`match-card ${chosen===x.item.id?'winner':''}`} key={x.item.id} onClick={()=>navigate(`/title/${x.item.id}`)}><div className="match-rank">{i+1}</div><div className="match-art" style={{'--a':x.item.palette[0],'--b':x.item.palette[1]} as React.CSSProperties}>{x.item.symbol}</div><div className="match-copy"><h3>{x.item.title}</h3><strong>{x.score} % compatible</strong><p>✓ {selectedProfileNames(selected,availableProfiles)} · ✓ satisfaction minimale {x.minAffinity}% · {x.seenCount>0?`⚠ déjà vu par ${x.seenCount} profil${x.seenCount>1?'s':''}`:'✓ jamais vu par le groupe'} · {x.item.duration}</p></div><ChevronRight/></button>)}{!scored.length&&!computing&&<div className="empty-recommendations"><Sparkles/><h3>Aucun titre avec ces contraintes</h3><p>Essayez « Peu importe » pour la durée ou choisissez un autre genre.</p></div>}{computing&&!scored.length&&<div className="library-loading"><i/>Calcul du meilleur compromis…</div>}</div>
   </>;
 }
+const moodGenres:Record<Mood,string[]>={Détente:['Comédie','Famille','Animation'],Action:['Action','Aventure','Action & aventure'],Émotion:['Drame','Romance'],Frissons:['Horreur','Thriller','Mystère'],Découverte:['Documentaire','Histoire','Science-fiction']};
+function matchesDuration(item:MediaItem,duration:'short'|'medium'|'any'){if(duration==='any'||item.kind==='serie')return true;const match=item.duration.match(/(?:(\d+)h)?(\d{1,2})/);if(!match)return true;const minutes=Number(match[1]??0)*60+Number(match[2]??0);return duration==='short'?minutes<90:minutes>=90&&minutes<=120}
+function selectedProfileNames(ids:string[],availableProfiles:Profile[]){const names=ids.map(id=>availableProfiles.find(profile=>profile.id===id)?.name).filter(Boolean);return names.length?`${names.join(', ')} sont pris en compte`:'sélection familiale neutre'}
 function FilterGroup({title,children}:{title:string;children:React.ReactNode}){return <div className="filter-group"><strong>{title}</strong><div>{children}</div></div>}
 
-function DetailPage() {
+function DetailPage({profile}:{profile:Profile}) {
   const { id } = useParams(); const navigate = useNavigate(); const item = resolveMedia(id);
+  const isLocalSeries=Boolean(item.local)&&item.kind==='serie';
+  const [downloading,setDownloading]=useState(false);
+  const {seasons,detail}=useLibraryGroup(id,profile.id,isLocalSeries);
+  const nextId=detail?.nextEpisodeId; const playTarget=nextId??item.id;
+  const nextEpisode=seasons.flatMap(season=>season.episodes.map(episode=>({...episode,season:season.season}))).find(episode=>episode.id===nextId);
+  const nextStarted=nextEpisode?(nextEpisode.progress>0.02&&nextEpisode.progress<0.9):Boolean(item.progress);
+  const playLabel=isLocalSeries?(nextEpisode?`${nextStarted?'Reprendre':'Lire'} S${nextEpisode.season}E${String(nextEpisode.episode).padStart(2,'0')}`:'Lire'):(item.progress?'Reprendre':'Lire');
   return <div className="detail" style={{ '--a': item.palette[0], '--b': item.palette[1], backgroundImage:`linear-gradient(90deg,rgba(1,7,14,.94) 8%,rgba(1,7,14,.28)), url('${item.art??'/assets/sceneroot-landscape.png'}')` } as React.CSSProperties}>
     <button className="back focusable" onClick={()=>navigate(-1)}><ArrowLeft/> Retour</button>
     <div className="detail__symbol">{item.symbol}<i/></div><div className="detail__content"><span className="eyebrow">{item.kind === 'film' ? 'FILM' : 'SÉRIE'} · {item.year}</span><h1>{item.title}</h1>
-    <div className="detail__meta"><Star fill="currentColor"/> {item.rating>0?`${item.rating}/10`:'Non noté'} <span>{item.duration}</span><span>{item.quality}</span></div><p>{item.description}</p><div className="detail__genres">{item.genres.map(g=><span key={g}>{g}</span>)}</div>{item.sourceUrl&&<a className="source-link" href={item.sourceUrl} target="_blank" rel="noreferrer">Données : {item.source==='tvmaze'?'TVmaze':item.source==='wikipedia'?'Wikipédia':'TMDB'}</a>}
-    <div className="actions"><button className="primary focusable" onClick={()=>navigate(`/player/${item.id}`)}><Play fill="currentColor"/> {item.progress ? 'Reprendre' : 'Lire'}</button><button className="secondary focusable"><Download/> Télécharger</button><button className="icon-btn focusable"><Heart/></button></div></div>
+    <div className="detail__meta"><Star fill="currentColor"/> {item.rating>0?`${item.rating}/10`:'Non noté'} <span>{item.duration}</span><span>{item.quality}</span></div><p>{item.description}</p><div className="detail__genres">{item.genres.map(g=><span key={g}>{g}</span>)}</div>{item.sourceUrl&&<a className="source-link" href={item.sourceUrl} target="_blank" rel="noreferrer">Informations : {item.informationSource??(item.source==='tvmaze'?'TVmaze':item.source==='wikipedia'?'Wikipédia':'TMDB')}</a>}
+    <div className="actions"><button className="primary focusable" onClick={()=>navigate(`/player/${playTarget}`)}><Play fill="currentColor"/> {playLabel}</button><button className="secondary focusable" onClick={()=>setDownloading(true)}><Download/> Télécharger</button><button className="icon-btn focusable"><Heart/></button></div>
+    {downloading&&<DownloadPanel item={item} onClose={()=>setDownloading(false)}/>}
+    {isLocalSeries&&seasons.length>0&&<div className="episodes">{seasons.map(season=><div className="season" key={season.season}><h3>Saison {season.season} · {season.episodes.length} épisode{season.episodes.length>1?'s':''}</h3><div className="episode-list">{season.episodes.map(episode=><button className={`episode focusable ${episode.id===nextId?'is-next':''}`} key={episode.id} onClick={()=>navigate(`/player/${episode.id}`)}><span className="episode-num">E{String(episode.episode).padStart(2,'0')}</span><span className="episode-title">{episode.title}{episode.id===nextId&&<em> · à suivre</em>}</span><Play size={16} fill="currentColor"/>{episode.progress>0.02&&<i className="episode-progress" style={{width:`${Math.min(100,Math.round(episode.progress*100))}%`}}/>}</button>)}</div></div>)}</div>}</div>
   </div>;
 }
 
-function PlayerPage() {
-  const { id } = useParams(); const navigate=useNavigate(); const item=resolveMedia(id); const [playing,setPlaying]=useState(true); const [panel,setPanel]=useState<'sub'|'audio'|null>('sub');
+function PlayerPage({profile}:{profile:Profile}) {
+  const { id } = useParams(); const navigate=useNavigate(); const item=resolveMedia(id);
+  const isLocal=Boolean(item.local)&&Boolean(id);
+  const [status,setStatus]=useState<PlayerStatus|null>(null);
+  const [panel,setPanel]=useState<'sub'|'audio'|null>(null);
+  const [error,setError]=useState('');
+  const positionRef=useRef(0); const durationRef=useRef(0);
+  const control=useCallback((command:string,value?:number|string)=>fetch('/api/player/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command,value})}),[]);
+  const persist=useCallback((keepalive=false)=>{if(!isLocal||!id||durationRef.current<=0)return;void fetch(`/api/playback/${encodeURIComponent(profile.id)}/${encodeURIComponent(id)}`,{method:'PUT',keepalive,headers:{'Content-Type':'application/json'},body:JSON.stringify({position:positionRef.current,duration:durationRef.current})}).catch(()=>{})},[id,isLocal,profile.id]);
+  useEffect(()=>{if(!isLocal||!id)return;let active=true;(async()=>{let startPosition=0;try{const resume=await fetch(`/api/playback/${encodeURIComponent(profile.id)}`);if(resume.ok){const rows=await resume.json() as Array<{mediaId:string;position:number}>;startPosition=rows.find(row=>row.mediaId===id)?.position??0}}catch{}try{const response=await fetch(`/api/player/${encodeURIComponent(id)}/play`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({startPosition})});if(!response.ok)throw new Error()}catch{if(active)setError('Le lecteur mpv est indisponible sur cet appareil.')}})();return()=>{active=false}},[id,isLocal,profile.id]);
+  useEffect(()=>{if(!isLocal)return;let active=true;const tick=async()=>{try{const response=await fetch('/api/player/status');if(!response.ok)return;const next=await response.json() as PlayerStatus;if(!active)return;setStatus(next);if(next.running){positionRef.current=next.position??0;durationRef.current=next.duration??0}}catch{}};void tick();const interval=setInterval(()=>void tick(),1000);return()=>{active=false;clearInterval(interval)}},[isLocal]);
+  useEffect(()=>{if(!isLocal)return;const interval=setInterval(()=>persist(),10000);const onHide=()=>persist(true);window.addEventListener('pagehide',onHide);return()=>{clearInterval(interval);window.removeEventListener('pagehide',onHide);persist(true)}},[isLocal,persist]);
+  const finish=async()=>{persist(true);await control('stop').catch(()=>{});navigate(`/rate/${item.id}`)};
+  const leave=()=>{persist(true);navigate(-1)};
+  const running=Boolean(status?.running);const playing=status?.playing??true;const position=status?.position??0;const duration=status?.duration??0;
+  const pct=duration>0?Math.min(100,(position/duration)*100):0;
+  const seek:React.MouseEventHandler<HTMLDivElement>=event=>{if(!running||duration<=0)return;const rect=event.currentTarget.getBoundingClientRect();const ratio=Math.min(1,Math.max(0,(event.clientX-rect.left)/rect.width));void control('seek-to',Math.round(ratio*duration))};
+  const audioTracks=status?.audioTracks??[]; const subtitleTracks=status?.subtitleTracks??[];
   return <div className="player" style={{ '--a': item.palette[0], '--b': item.palette[1], backgroundImage:`linear-gradient(105deg,rgba(1,7,14,.5),transparent 60%), url('${item.art??'/assets/sceneroot-landscape.png'}')` } as React.CSSProperties}>
-    <div className="player__scene"><span>{item.symbol}</span><i/></div><div className="player__top"><Brand compact/><div><h1>{item.title}</h1><p>{item.kind === 'film'?'Film':'Série'} · {item.year} · {item.duration} · {item.quality}</p></div></div>
-    {panel && <div className="track-panel"><h3>{panel==='sub'?<Subtitles/>:<Volume2/>}{panel==='sub'?'Sous-titres':'Piste audio'}</h3>{['Désactivés','Français','Anglais','Charger un fichier…'].map((x,i)=><button className={i===1?'active':''} key={x}>{x}{i===1&&<Check/>}</button>)}</div>}
-    <div className="player__controls"><div className="timeline"><span>0:28:17</span><i><b/></i><span>-1:13:43</span></div><div className="controls-row"><button onClick={()=>navigate(-1)}><ArrowLeft/>Retour</button><button className="round" onClick={()=>setPlaying(!playing)}>{playing?<Pause fill="currentColor"/>:<Play fill="currentColor"/>}</button><div className="controls-spacer"/><button onClick={()=>navigate(`/rate/${item.id}`)}><Check/>Terminer</button><button className={panel==='sub'?'selected':''} onClick={()=>setPanel(panel==='sub'?null:'sub')}><Subtitles/>Sous-titres</button><button className={panel==='audio'?'selected':''} onClick={()=>setPanel(panel==='audio'?null:'audio')}><Volume2/>Audio</button><button><Gauge/>Qualité</button></div></div>
+    <div className="player__scene"><span>{item.symbol}</span><i/></div><div className="player__top"><Brand compact/><div><h1>{item.title}</h1><p>{item.kind === 'film'?'Film':'Série'} · {item.year} · {item.duration} · {item.quality}</p>{isLocal?(error?<small className="player-note">{error}</small>:running?<small className="player-note">Lecture native mpv sur le téléviseur.</small>:<small className="player-note">Démarrage du lecteur…</small>):<small className="player-note">Ce titre n’est pas encore dans votre médiathèque locale.</small>}</div></div>
+    {panel==='audio' && <div className="track-panel"><h3><Volume2/>Piste audio</h3>{audioTracks.length?audioTracks.map(track=><button className={track.selected?'active':''} key={track.id} onClick={()=>void control('set-audio',track.id)}>{track.label}{track.selected&&<Check/>}</button>):<button disabled>Aucune piste détectée</button>}</div>}
+    {panel==='sub' && <div className="track-panel"><h3><Subtitles/>Sous-titres</h3><button className={subtitleTracks.every(track=>!track.selected)?'active':''} onClick={()=>void control('set-subtitle','no')}>Désactivés{subtitleTracks.every(track=>!track.selected)&&<Check/>}</button>{subtitleTracks.map(track=><button className={track.selected?'active':''} key={track.id} onClick={()=>void control('set-subtitle',track.id)}>{track.label}{track.selected&&<Check/>}</button>)}</div>}
+    <div className="player__controls"><div className="timeline"><span>{formatTime(position)}</span><i onClick={seek} role="slider" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100} tabIndex={0}><b style={{width:`${pct}%`}}/></i><span>-{formatTime(Math.max(0,duration-position))}</span></div><div className="controls-row"><button onClick={leave}><ArrowLeft/>Retour</button><button onClick={()=>void control('seek-back')} disabled={!running}><RotateCcw/>-10s</button><button className="round" onClick={()=>void control(playing?'pause':'play')} disabled={!running}>{playing?<Pause fill="currentColor"/>:<Play fill="currentColor"/>}</button><button onClick={()=>void control('seek-forward')} disabled={!running}><Timer/>+30s</button><div className="controls-spacer"/><button onClick={finish}><Check/>Terminer</button><button className={panel==='sub'?'selected':''} onClick={()=>setPanel(panel==='sub'?null:'sub')}><Subtitles/>Sous-titres</button><button className={panel==='audio'?'selected':''} onClick={()=>setPanel(panel==='audio'?null:'audio')}><Volume2/>Audio</button></div></div>
   </div>;
 }
 
@@ -151,16 +218,44 @@ function RatingPage({profile}:{profile:Profile}) {
   return <div className="rating-page" style={{backgroundImage:`linear-gradient(90deg,rgba(2,8,17,.72),rgba(2,8,17,.58)),url('${item.art??'/assets/sceneroot-landscape.png'}')`}}><Brand compact/><div className="rating-card"><span className="rating-icon"><Film/></span><h1>Vous avez terminé<br/>« {item.title} »</h1><p>Merci d’avoir regardé ! Que pensez-vous de ce {item.kind==='film'?'film':'programme'} ?</p><div className="stars">{[1,2,3,4,5].map(value=><button key={value} onClick={()=>setScore(value)} aria-label={`${value} étoile${value>1?'s':''}`}><Star fill={value<=score?'currentColor':'transparent'}/></button>)}</div><strong>{score} / 5 — {score===5?'Excellent':score===4?'Très bien':score===3?'Bien':score===2?'Moyen':'Décevant'}</strong><div className="rating-tags"><button className={tags.includes('À revoir')?'on':''} onClick={()=>toggle('À revoir')}><RotateCcw/>À revoir</button><button className={tags.includes('Émouvant')?'on':''} onClick={()=>toggle('Émouvant')}><Heart/>Émouvant</button><button className={tags.includes('Surprenant')?'on':''} onClick={()=>toggle('Surprenant')}><Sparkles/>Surprenant</button><button className={tags.includes('Trop long')?'on':''} onClick={()=>toggle('Trop long')}><Hourglass/>Trop long</button></div><div className="rating-actions"><button className="primary" onClick={save} disabled={saving}><Star fill="currentColor"/>{saving?'Enregistrement…':'Noter maintenant'}</button><button className="secondary" onClick={()=>navigate('/')}><Clock3/>Plus tard</button></div><small><Users/>Vos avis nous aident à proposer des recommandations plus personnalisées.</small></div></div>;
 }
 
-function RootsPage() { const navigate=useNavigate(); return <><div className="welcome"><h1>Mes <em>Roots</em></h1><p>Votre historique de visionnage personnel.</p></div><div className="stat-tabs"><button className="is-on"><Clock3/>Déjà vus</button><button><Film/>Films</button><button><Tv/>Séries</button><button><Heart/>Favoris notés</button></div><div className="grid">{media.slice(0,10).map((m,i)=><MediaCard item={{...m,progress:undefined}} active={i===0} key={m.id} onOpen={()=>navigate(`/title/${m.id}`)}/>)}</div></> }
+type RootsTab='all'|'film'|'serie'|'rated';
+function RootsPage({profile}:{profile:Profile}) {
+  const navigate=useNavigate(); const history=useHistory(profile.id); const [tab,setTab]=useState<RootsTab>('all');
+  const filtered=history.items.filter(item=>tab==='all'?true:tab==='rated'?item.rating>0:item.kind===tab);
+  const tabs:[RootsTab,string,React.ReactNode][]=[['all','Déjà vus',<Clock3/>],['film','Films',<Film/>],['serie','Séries',<Tv/>],['rated','Favoris notés',<Heart/>]];
+  return <><div className="welcome"><h1>Mes <em>Roots</em></h1><p>Votre historique de visionnage personnel.</p></div>
+    <div className="stat-tabs">{tabs.map(([value,label,icon])=><button className={tab===value?'is-on':''} key={value} onClick={()=>setTab(value)}>{icon}{label}</button>)}</div>
+    {history.loading&&<div className="library-loading"><i/>Lecture de votre historique…</div>}
+    {!history.loading&&!filtered.length&&<div className="library-empty"><Clock3/><h2>Rien pour le moment</h2><p>Vos films et séries terminés ou notés apparaîtront ici.</p></div>}
+    {filtered.length>0&&<div className="grid">{filtered.map((m,i)=><MediaCard item={m} active={i===0} key={m.id} onOpen={()=>navigate(`/title/${m.id}`)}/>)}</div>}</> }
 
+const torrentStatus:Record<number,string>={0:'En pause',1:'Vérif. en attente',2:'Vérification',3:'En file',4:'Téléchargement',5:'Envoi en file',6:'Partage'};
+function DownloadsPage() {
+  const {torrents,error,loading,control}=useDownloads();
+  return <><div className="welcome"><h1>Téléchargements</h1><p>File Transmission en direct.</p></div>
+    {loading&&!torrents.length&&<div className="library-loading"><i/>Connexion à Transmission…</div>}
+    {error&&<div className="library-empty"><Download/><h2>Transmission indisponible</h2><p>{error}</p></div>}
+    {!error&&!loading&&!torrents.length&&<div className="library-empty"><Download/><h2>Aucun téléchargement</h2><p>Lancez un téléchargement depuis une fiche pour le suivre ici.</p></div>}
+    {torrents.length>0&&<div className="download-list">{torrents.map(torrent=>{const pct=Math.round(torrent.percentDone*100);const active=torrent.status!==0;return <div className="download-row" key={torrent.id}>
+      <div className="download-info"><strong>{torrent.name}</strong><div className="download-badges"><span>{torrentStatus[torrent.status]??'—'}</span><span>{pct}%</span><span>{formatBytes(torrent.sizeWhenDone||torrent.totalSize)}</span>{torrent.rateDownload>0&&<span>↓ {formatBytes(torrent.rateDownload)}/s</span>}{torrent.peersConnected>0&&<span>{torrent.peersConnected} pairs</span>}{torrent.errorString&&<span className="src">{torrent.errorString}</span>}</div><span className="progress"><i style={{width:`${pct}%`}}/></span></div>
+      <div className="download-actions">{active?<button className="icon-btn" title="Mettre en pause" onClick={()=>void control(torrent.id,'stop')}><Pause/></button>:<button className="icon-btn" title="Reprendre" onClick={()=>void control(torrent.id,'start')}><Play fill="currentColor"/></button>}<button className="icon-btn" title="Annuler" onClick={()=>{if(window.confirm('Retirer ce téléchargement ? Les données déjà téléchargées sont conservées.'))void control(torrent.id,'remove',false)}}><Trash2/></button></div>
+    </div>})}</div>}
+  </>;
+}
+type StorageRoot={root:string;total:number;free:number;available:number;libraryBytes:number};
+function formatBytes(bytes:number){if(!bytes)return '0 o';const units=['o','Ko','Mo','Go','To'];const i=Math.min(units.length-1,Math.floor(Math.log(bytes)/Math.log(1024)));return `${(bytes/1024**i).toFixed(i>=3?1:0)} ${units[i]}`}
 function SettingsPage() {
   const [scan, setScan] = useState(false); const [scanMessage,setScanMessage]=useState('Surveillance active'); const [cec,setCec]=useState(true); const [updates,setUpdates]=useState(true);
+  const [storage,setStorage]=useState<StorageRoot[]>([]);
+  useEffect(()=>{fetch('/api/storage').then(response=>response.ok?response.json():[]).then((rows:StorageRoot[])=>setStorage(rows)).catch(()=>{})},[]);
+  const totals=storage.reduce((acc,s)=>({total:acc.total+s.total,free:acc.free+s.free,library:acc.library+s.libraryBytes}),{total:0,free:0,library:0});
+  const used=Math.max(0,totals.total-totals.free);
   const runScan=async()=>{setScan(true);setScanMessage('Analyse des emplacements…');try{const response=await fetch('/api/library/scan',{method:'POST'});const result=await response.json() as {items?:unknown[]};setScanMessage(`${result.items?.length??0} média(s) indexé(s)`)}catch{setScanMessage('Serveur indisponible — nouvel essai au prochain scan')}finally{setScan(false)}};
   return <><div className="welcome"><h1>Paramètres</h1><p>Configurez votre médiathèque, la lecture et l’appareil.</p></div><div className="settings-grid">
     <div className="settings-card"><h2><FolderOpen/>Médiathèque</h2><p>Dossiers analysés · <span className="online">{scanMessage}</span></p><div className="path"><HardDrive/> /mnt/media <Check/></div><button className="primary" onClick={runScan} disabled={scan}><RefreshCw className={scan?'spin':''}/>{scan?'Analyse en cours…':'Analyser maintenant'}</button></div>
     <div className="settings-card"><h2><Monitor/>Téléviseur & CEC</h2><Setting label="Contrôle HDMI-CEC" value={cec} setValue={setCec}/><Setting label="Démarrer en plein écran" value={true}/><Setting label="Adapter le taux de rafraîchissement" value={true}/></div>
     <div className="settings-card"><h2><Download/>Téléchargements</h2><p>Client local</p><div className="path"><Wifi/> Transmission RPC <Check/></div><label>Limite de stockage<input type="range" defaultValue="70"/></label><small>Les torrents doivent provenir de contenus que vous êtes autorisé à télécharger.</small></div>
-    <div className="settings-card storage"><h2><BarChart3/>Stockage</h2><div className="storage-number"><b>3,2 To</b> / 4 To utilisés</div><div className="storage-bar"><i/><i/><i/><i/></div><div className="storage-key"><span>Films 1,8 To</span><span>Séries 950 Go</span><span>Téléchargements 210 Go</span><span>Cache 42 Go</span></div><p><strong>127 Go</strong> peuvent potentiellement être récupérés.</p></div>
+    <div className="settings-card storage"><h2><BarChart3/>Stockage</h2>{storage.length?<><div className="storage-number"><b>{formatBytes(used)}</b> / {formatBytes(totals.total)} utilisés</div><div className="storage-bar"><i style={{width:`${totals.total?Math.min(100,totals.library/totals.total*100):0}%`}}/><i style={{width:`${totals.total?Math.min(100,Math.max(0,used-totals.library)/totals.total*100):0}%`}}/></div><div className="storage-key"><span>Médiathèque indexée {formatBytes(totals.library)}</span><span>Espace libre {formatBytes(totals.free)}</span></div><p>{storage.length} emplacement{storage.length>1?'s':''} de stockage surveillé{storage.length>1?'s':''}.</p></>:<p>Aucun emplacement de stockage détecté. Configurez <code>SCENEROOT_MEDIA</code> puis relancez une analyse.</p>}</div>
     <div className="settings-card"><h2><ShieldCheck/>Système</h2><Setting label="Mises à jour automatiques" value={updates} setValue={setUpdates}/><Setting label="Catalogue et cache local" value={true}/><p>TMDB si configuré · sinon Wikipédia + TVmaze</p><small>Ce produit utilise l’API TMDB mais n’est ni approuvé ni certifié par TMDB.</small><div className="version">SceneRoot v0.1.0 <span>À jour</span></div></div>
     <div className="settings-card sources"><h2><Wifi/>Sources de recherche</h2><div className="source-row"><span><b>Torznab / C411</b><small>Clé API stockée localement</small></span><i className="dot"/></div><button className="secondary"><Plus/>Ajouter une source Torznab</button><small>Utilisez uniquement des sources et contenus que vous êtes autorisé à récupérer.</small></div>
   </div></>;
@@ -179,8 +274,8 @@ function App() {
   const upsertProfile=(saved:Profile)=>setSavedProfiles(current=>current.some(item=>item.id===saved.id)?current.map(item=>item.id===saved.id?saved:item):[...current,saved]);
   if(!profile)return <ProfileGate availableProfiles={availableProfiles} onSaved={upsertProfile} onSelect={p=>{localStorage.setItem('sceneroot-profile',JSON.stringify(p));setProfile(p)}}/>;
   const switchProfile=()=>{localStorage.removeItem('sceneroot-profile');setProfile(null)};
-  return <Routes><Route path="/player/:id" element={<PlayerPage/>}/><Route path="/rate/:id" element={<RatingPage profile={profile}/>}/><Route path="/title/:id" element={<Shell profile={profile} onSwitchProfile={switchProfile}><DetailPage/></Shell>}/><Route path="*" element={<Shell profile={profile} onSwitchProfile={switchProfile}><Routes>
-    <Route path="/" element={<HomePage profile={profile}/>}/><Route path="/films" element={<BrowsePage kind="film" title="Films"/>}/><Route path="/series" element={<BrowsePage kind="serie" title="Séries"/>}/><Route path="/discover" element={<BrowsePage title="Découvrir"/>}/><Route path="/tonight" element={<TonightPage/>}/><Route path="/library" element={<LibraryPage/>}/><Route path="/roots" element={<RootsPage/>}/><Route path="/search" element={<SearchPage/>}/><Route path="/settings" element={<SettingsPage/>}/>
+  return <Routes><Route path="/player/:id" element={<PlayerPage profile={profile}/>}/><Route path="/rate/:id" element={<RatingPage profile={profile}/>}/><Route path="/title/:id" element={<Shell profile={profile} onSwitchProfile={switchProfile}><DetailPage profile={profile}/></Shell>}/><Route path="*" element={<Shell profile={profile} onSwitchProfile={switchProfile}><Routes>
+    <Route path="/" element={<HomePage profile={profile}/>}/><Route path="/films" element={<BrowsePage kind="film" title="Films"/>}/><Route path="/series" element={<BrowsePage kind="serie" title="Séries"/>}/><Route path="/discover" element={<BrowsePage title="Découvrir"/>}/><Route path="/tonight" element={<TonightPage availableProfiles={availableProfiles}/>}/><Route path="/library" element={<LibraryPage/>}/><Route path="/downloads" element={<DownloadsPage/>}/><Route path="/roots" element={<RootsPage profile={profile}/>}/><Route path="/search" element={<SearchPage/>}/><Route path="/settings" element={<SettingsPage/>}/>
   </Routes></Shell>}/></Routes>;
 }
 export default App;

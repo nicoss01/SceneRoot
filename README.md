@@ -40,7 +40,7 @@ chromium --kiosk --noerrdialogs --disable-infobars http://127.0.0.1:4174
 - Les dossiers sont définis par `SCENEROOT_MEDIA` (séparés par des virgules).
 - `POST /api/library/scan` analyse récursivement MP4, MKV, WebM, AVI, MOV et M4V.
 - Les fichiers inchangés réutilisent leur analyse `ffprobe`; les correspondances corrigées ne sont pas perdues au scan suivant.
-- `GET /api/catalog` expose un catalogue paginé. TMDB est utilisé lorsqu'une clé est configurée ; sinon SceneRoot utilise Wikipédia pour les films et TVmaze pour les séries.
+- `GET /api/catalog` expose un catalogue paginé et accepte les filtres `kind`, `genre` et `q`. TMDB est utilisé lorsqu'une clé est configurée ; sinon SceneRoot utilise Wikipédia pour les films et TVmaze pour les séries.
 - Les réponses distantes sont conservées dans `SCENEROOT_DATA/cache` pendant 6 à 24 heures. Un cache périmé reste utilisable si une source est temporairement inaccessible.
 - Après le scan, les nouveaux fichiers sont enrichis en arrière-plan uniquement lorsque le titre et l’année donnent une correspondance unique. Les cas ambigus restent intacts.
 - `GET /api/library/grouped` alimente l’écran réel « Ma médiathèque » en regroupant versions et épisodes.
@@ -66,4 +66,4 @@ Cette première version est un socle fonctionnel et installable. Le scan, la mé
 
 Les profils créés ou modifiés depuis l’interface sont persistés par l’API. Chaque profil peut choisir l’un des dix avatars SceneRoot fournis, une limite d’âge et un code optionnel. Les codes sont dérivés avec `scrypt` et ne sont jamais stockés en clair. L’écran de fin de lecture enregistre la note et les qualificatifs du profil actif.
 
-Les sélecteurs de découverte, de recherche et de choix familial exposent l’ensemble des genres films et séries de la taxonomie TMDB, avec leurs libellés français. Les genres renvoyés par TVmaze restent aussi affichés lorsqu’ils proviennent du catalogue de séries libre.
+Les sélecteurs de découverte, de recherche et de choix familial exposent l’ensemble des genres films et séries de TMDB et TVmaze, avec leurs libellés français. La recherche charge progressivement les résultats distants filtrés et conserve les fiches consultées dans le cache de session.

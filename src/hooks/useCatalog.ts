@@ -10,7 +10,7 @@ type CatalogResponse = {
   cachedAt: string;
 };
 
-export function useCatalog(kind?: MediaKind, limit = 12, enabled = true) {
+export function useCatalog(kind?: MediaKind, limit = 12, enabled = true, genre = '', query = '') {
   const [items, setItems] = useState<MediaItem[]>([]);
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
@@ -26,7 +26,7 @@ export function useCatalog(kind?: MediaKind, limit = 12, enabled = true) {
     setHasMore(true);
     setSource('');
     setError('');
-  }, [kind, limit]);
+  }, [genre, kind, limit, query]);
 
   const loadMore = useCallback(async () => {
     if (!enabled || loading || !hasMore) return;
@@ -39,6 +39,8 @@ export function useCatalog(kind?: MediaKind, limit = 12, enabled = true) {
     try {
       const params = new URLSearchParams({ page: String(nextPage), limit: String(limit) });
       if (kind) params.set('kind', kind);
+      if (genre) params.set('genre', genre);
+      if (query) params.set('q', query);
       const response = await fetch(`/api/catalog?${params}`, { signal: controller.signal });
       if (!response.ok) throw new Error(`Catalogue indisponible (${response.status})`);
       const result = await response.json() as CatalogResponse;
@@ -56,7 +58,7 @@ export function useCatalog(kind?: MediaKind, limit = 12, enabled = true) {
     } finally {
       if (!controller.signal.aborted) setLoading(false);
     }
-  }, [enabled, hasMore, kind, limit, loading, page]);
+  }, [enabled, genre, hasMore, kind, limit, loading, page, query]);
 
   useEffect(() => {
     if (enabled && page === 0 && items.length === 0 && !loading && !error) void loadMore();
