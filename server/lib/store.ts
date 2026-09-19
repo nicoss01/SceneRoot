@@ -40,7 +40,7 @@ export function createStore(dataDir: string): Store {
   if (!DatabaseSync) return jsonStore(jsonPath);
 
   const db = new DatabaseSync(sqlitePath);
-  db.exec('PRAGMA journal_mode = WAL');
+  db.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000');
   db.exec(`
     CREATE TABLE IF NOT EXISTS profiles(id TEXT PRIMARY KEY, data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS library(id TEXT PRIMARY KEY, data TEXT NOT NULL);

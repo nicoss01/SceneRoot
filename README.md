@@ -35,12 +35,26 @@ Le script installé utilise automatiquement :
 chromium --kiosk --noerrdialogs --disable-infobars http://127.0.0.1:4174
 ```
 
-## Médias et métadonnées
+## Catalogue local et métadonnées
+
+SceneRoot utilise désormais une architecture locale en couches :
+
+- **IMDb Datasets** alimente les tables SQLite `catalog_titles` et `catalog_episodes` avec les films, séries, notes publiques et relations saison/épisode.
+- **TMDB** enrichit paresseusement uniquement les titres réellement affichés avec le titre, le résumé et les images en français. La clé API v3 se configure dans l’assistant initial, dans les paramètres ou via `TMDB_API_KEY`; elle n’est jamais renvoyée en clair au navigateur.
+- **TMDB puis TVmaze** enrichissent les épisodes. La structure reste disponible hors ligne grâce aux relations IMDb déjà enregistrées.
+- **Wikidata** associe par lots les identifiants IMDb, TMDB et Wikidata dans `catalog_localized`.
+- **Wikipédia francophone** n’est interrogée que pour produire un résumé de secours lorsqu’aucune clé TMDB n’est configurée.
+
+La première synchronisation IMDb est volontairement activable depuis **Paramètres > Catalogue local**, car elle télécharge et indexe plusieurs jeux de données volumineux. Les imports suivants sont lancés en arrière-plan tous les 7 jours par défaut (`SCENEROOT_CATALOG_SYNC_DAYS`) et utilisent un jeton de génération : les anciennes lignes ne sont supprimées qu’après la réussite de la nouvelle phase. `GET /api/catalog/status` expose l’avancement et `POST /api/catalog/sync` force une synchronisation.
+
+Les jeux de données IMDb sont proposés pour une utilisation personnelle et non commerciale. Vérifiez leurs conditions avant toute distribution ou exploitation commerciale de SceneRoot.
+
+## Médias locaux
 
 - Les dossiers sont définis par `SCENEROOT_MEDIA` (séparés par des virgules).
 - `POST /api/library/scan` analyse récursivement MP4, MKV, WebM, AVI, MOV et M4V.
 - Les fichiers inchangés réutilisent leur analyse `ffprobe`; les correspondances corrigées ne sont pas perdues au scan suivant.
-- `GET /api/catalog` expose un catalogue paginé et accepte les filtres `kind`, `genre` et `q`. TMDB est utilisé lorsqu'une clé est configurée ; sinon SceneRoot utilise Wikipédia pour les films et TVmaze pour les séries.
+- `GET /api/catalog` interroge le catalogue SQLite paginé et accepte les filtres `kind`, `genre`, `q` et `sort`. Tant que le premier import IMDb n’est pas terminé, TMDB peut fournir un catalogue transitoire si une clé est configurée ; sinon l’interface conserve ses données de démonstration. Wikipédia n’est plus utilisé comme source d’inventaire.
 - Les réponses distantes sont conservées dans `SCENEROOT_DATA/cache` pendant 6 à 24 heures. Un cache périmé reste utilisable si une source est temporairement inaccessible.
 - Après le scan, les nouveaux fichiers sont enrichis en arrière-plan uniquement lorsque le titre et l’année donnent une correspondance unique. Les cas ambigus restent intacts.
 - `GET /api/library/grouped` alimente l’écran réel « Ma médiathèque » en regroupant versions et épisodes.
@@ -48,8 +62,8 @@ chromium --kiosk --noerrdialogs --disable-infobars http://127.0.0.1:4174
 - `GET /api/media/:id` diffuse les fichiers avec prise en charge des requêtes HTTP Range.
 - La lecture TV principale passe par `mpv` (`POST /api/player/:id/play`) pour MKV, HEVC, HDR, pistes audio, sous-titres et accélération matérielle. Le lecteur web reste un mode de secours.
 - FFmpeg est installé pour l’inspection/transcodage à venir.
-- Une clé TMDB peut être placée dans `/etc/sceneroot.env`. Respectez les conditions et l’attribution TMDB lors de l’activation.
-- Les données TVmaze sont fournies sous licence CC BY-SA et les fiches de films proviennent de Wikipédia anglophone sous CC BY-SA. Les liens vers les fiches sources sont conservés dans chaque résultat distant.
+- Une clé TMDB peut être placée dans `/etc/sceneroot.env` ou enregistrée depuis l’interface. Une clé d’environnement est prioritaire et ne peut pas être remplacée depuis le navigateur.
+- Les données TVmaze sont fournies sous licence CC BY-SA, Wikidata sous CC0 et les résumés de secours Wikipédia sous CC BY-SA. Les liens vers les fiches sources sont conservés dans les résultats.
 - Les écrans de catalogue utilisent une pagination déclenchée par `IntersectionObserver`; les images utilisent le chargement différé natif du navigateur.
 
 ## Téléchargements

@@ -24,7 +24,7 @@ export interface MediaItem {
   symbol: string;
   art?: string;
   localPath?: string;
-  source?: 'local' | 'tmdb' | 'tvmaze' | 'wikipedia';
+  source?: 'local' | 'imdb' | 'tmdb' | 'tvmaze' | 'wikipedia';
   sourceUrl?: string;
   informationSource?: string;
   versionCount?: number;

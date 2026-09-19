@@ -15,6 +15,8 @@ export function SetupWizard({ onDone }: { onDone: (profiles: Profile[]) => void 
   const [reserve, setReserve] = useState(50);
   const [quality, setQuality] = useState('1080p');
   const [hdr, setHdr] = useState(false);
+  const [tmdbApiKey, setTmdbApiKey] = useState('');
+  const [error, setError] = useState('');
   const [finishing, setFinishing] = useState(false);
 
   const quickAdd = async (name: string) => {
@@ -26,11 +28,13 @@ export function SetupWizard({ onDone }: { onDone: (profiles: Profile[]) => void 
   };
 
   const finish = async () => {
-    setFinishing(true);
+    setFinishing(true); setError('');
     try {
-      await fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ minFreeGb: reserve, preferredQuality: quality, preferHdr: hdr, setupComplete: true }) });
+      const response = await fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ minFreeGb: reserve, preferredQuality: quality, preferHdr: hdr, setupComplete: true, catalogSyncEnabled: true, ...(tmdbApiKey.trim() ? { tmdbApiKey: tmdbApiKey.trim() } : {}) }) });
+      if (!response.ok) { const payload = await response.json().catch(() => ({})) as { error?: string }; throw new Error(payload.error ?? 'Impossible de finaliser la configuration.'); }
       fetch('/api/library/scan', { method: 'POST' }).catch(() => {});
-    } finally { onDone(profiles); }
+      onDone(profiles);
+    } catch (cause) { setError((cause as Error).message); } finally { setFinishing(false); }
   };
 
   const steps = ['Bienvenue', 'Profils', 'Préférences', 'C’est prêt'];
@@ -63,6 +67,7 @@ export function SetupWizard({ onDone }: { onDone: (profiles: Profile[]) => void 
       <label className="setup-field">Réserve d’espace disque : <b>{reserve} Go</b><input type="range" min={5} max={500} step={5} value={reserve} onChange={event => setReserve(Number(event.target.value))} /></label>
       <label className="setup-field">Qualité préférée<select value={quality} onChange={event => setQuality(event.target.value)}><option value="720p">720p</option><option value="1080p">1080p</option><option value="2160p">4K (2160p)</option></select></label>
       <button className={`chip toggle ${hdr ? 'on' : ''}`} onClick={() => setHdr(value => !value)}><Monitor size={15} /> Préférer le HDR : {hdr ? 'oui' : 'non'}</button>
+      <label className="setup-field">Clé API TMDB v3 <small>Facultative · permet les titres, résumés et images en français. Sans clé, Wikipédia sert uniquement de secours.</small><input type="password" autoComplete="off" placeholder="Clé API TMDB" value={tmdbApiKey} onChange={event => setTmdbApiKey(event.target.value)} /></label>
       <div className="setup-actions"><button className="secondary" onClick={() => setStep(1)}>Retour</button><button className="primary" onClick={() => setStep(3)}>Continuer <ChevronRight /></button></div>
     </div>}
 
@@ -70,6 +75,7 @@ export function SetupWizard({ onDone }: { onDone: (profiles: Profile[]) => void 
       <div className="setup-icon"><Check /></div>
       <h1>Tout est prêt</h1>
       <p>{profiles.length} profil{profiles.length > 1 ? 's' : ''} créé{profiles.length > 1 ? 's' : ''}. SceneRoot va analyser votre médiathèque et vous laisser choisir un profil.</p>
+      {error && <div className="profile-error">{error}</div>}
       <button className="primary setup-next" disabled={finishing} onClick={() => void finish()}>{finishing ? 'Finalisation…' : 'Lancer SceneRoot'} <ChevronRight /></button>
     </div>}
   </div>;

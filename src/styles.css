@@ -450,6 +450,8 @@ section { margin: 0 0 13px; }
 .setup-field { width: 100%; max-width: 420px; text-align: left; display: block; color: #b3c4d8; }
 .setup-field input[type=range] { width: 100%; margin-top: 8px; }
 .setup-field select { width: 100%; margin-top: 6px; padding: 11px; background: var(--panel2, #081827); border: 1px solid #23405c; border-radius: 10px; color: inherit; }
+.setup-field input[type=password] { width: 100%; margin-top: 6px; padding: 11px; background: var(--panel2, #081827); border: 1px solid #23405c; border-radius: 10px; color: inherit; }
+.setup-field small { display: block; margin: 5px 0; color: #8399b2; font-weight: 400; }
 .setup-actions { display: flex; gap: 12px; margin-top: 10px; }
 .about { max-width: 780px; }
 .about-card { display: flex; gap: 14px; align-items: center; padding: 16px; margin-bottom: 18px; background: var(--panel,#0a1e31); border: 1px solid #23405c; border-radius: 13px; }
@@ -490,6 +492,8 @@ section { margin: 0 0 13px; }
 @media (max-width: 720px) { .stat-panels { grid-template-columns: 1fr; } .stat-bar { grid-template-columns: 96px 1fr auto; } }
 .source-form { display: grid; gap: 8px; margin: 12px 0; }
 .source-form input { padding: 9px 11px; background: rgba(5,17,30,.8); border: 1px solid #23405c; border-radius: 8px; color: inherit; }
+.catalog-settings .primary, .catalog-settings .secondary { margin: 8px 8px 0 0; }
+.episode-card:disabled { cursor: default; opacity: 1; }
 .reserve-field { display: block; }
 .reserve-field input { width: 100%; margin-top: 8px; }
 .mobile-access .qr-wrap { display: flex; justify-content: center; padding: 14px 0; }

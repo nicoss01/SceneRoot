@@ -52,6 +52,7 @@ export function requiresAdmin(method: string, url: string): boolean {
   if (path === '/api/downloads/rank') return false;
   return path === '/api/library/scan'
     || path === '/api/library/enrich'
+    || path === '/api/catalog/sync'
     || path === '/api/cec' || path.startsWith('/api/cec/')
     || path === '/api/downloads'
     || /^\/api\/downloads\/[^/]+\/(control|play)$/.test(path)
