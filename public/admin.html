@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#04121f" />
+<title>SceneRoot · Réglages</title>
+<style>
+  :root { --bg:#04121f; --panel:#0a1e31; --panel2:#081827; --border:#23405c; --cyan:#22d3ee; --text:#e6f0fa; --muted:#8fa6c0; --danger:#ff8a95; --ok:#39e58e; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; -webkit-text-size-adjust:100%; }
+  header { position:sticky; top:0; z-index:5; padding:16px; background:linear-gradient(180deg,#052033,#04121fee); border-bottom:1px solid var(--border); backdrop-filter:blur(6px); }
+  header h1 { margin:0; font-size:18px; letter-spacing:.5px; display:flex; align-items:center; gap:10px; }
+  header h1 b { color:var(--cyan); }
+  header p { margin:4px 0 0; color:var(--muted); font-size:12px; }
+  main { padding:16px; max-width:640px; margin:0 auto; display:flex; flex-direction:column; gap:16px; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:16px; }
+  .card h2 { margin:0 0 12px; font-size:15px; display:flex; align-items:center; gap:8px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
+  input, select { width:100%; padding:12px; font-size:16px; color:var(--text); background:var(--panel2); border:1px solid var(--border); border-radius:10px; }
+  input:focus, select:focus { outline:none; border-color:var(--cyan); }
+  button { font-size:15px; padding:12px 16px; border-radius:10px; border:1px solid var(--border); background:var(--panel2); color:var(--text); min-height:46px; }
+  button.primary { background:var(--cyan); color:#03151f; border-color:var(--cyan); font-weight:600; }
+  button.ghost { background:transparent; }
+  button.danger { color:var(--danger); border-color:#733a43; background:transparent; }
+  button:active { transform:translateY(1px); }
+  button:disabled { opacity:.5; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .row > * { flex:1; }
+  .between { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+  .muted { color:var(--muted); font-size:12px; }
+  .val { font-size:22px; font-weight:700; }
+  .bar { height:14px; background:#122a40; border-radius:8px; overflow:hidden; display:flex; margin:8px 0; }
+  .bar i { display:block; height:100%; }
+  .bar i.lib { background:var(--cyan); } .bar i.used { background:#3b82f6; }
+  .list-item { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px; background:var(--panel2); border:1px solid var(--border); border-radius:10px; margin-bottom:8px; }
+  .list-item .info { min-width:0; }
+  .list-item .info b { display:block; }
+  .list-item .info small { color:var(--muted); display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .grid { display:grid; gap:8px; }
+  .toast { position:fixed; left:50%; bottom:20px; transform:translateX(-50%); padding:12px 18px; border-radius:10px; font-size:14px; box-shadow:0 10px 30px #000a; z-index:10; max-width:90%; }
+  .toast.ok { background:#0c3b2b; color:var(--ok); border:1px solid var(--ok); }
+  .toast.err { background:#3b141a; color:var(--danger); border:1px solid #733a43; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .chip { flex:0 0 auto; padding:8px 12px; border-radius:999px; border:1px solid var(--border); background:var(--panel2); font-size:13px; }
+  .chip.on { border-color:var(--cyan); color:var(--cyan); }
+  .hint { font-size:11px; color:var(--muted); margin-top:8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Scene<b>Root</b> · Réglages</h1>
+  <p>Panneau mobile — configuration à distance</p>
+</header>
+<main>
+  <section class="card">
+    <h2>🔑 Accès administrateur</h2>
+    <label for="token">Jeton d'administration (SCENEROOT_ADMIN_TOKEN)</label>
+    <input id="token" type="password" autocomplete="off" placeholder="Requis pour modifier depuis un mobile" />
+    <div class="hint">Enregistré uniquement dans ce navigateur. Requis pour les actions de modification (analyse, réglages, sources). La consultation fonctionne sans jeton.</div>
+  </section>
+
+  <section class="card">
+    <h2>📁 Médiathèque</h2>
+    <div id="storage" class="muted">Chargement…</div>
+    <div class="row" style="margin-top:12px">
+      <button class="primary" id="scan">Analyser maintenant</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>⬇️ Téléchargements</h2>
+    <div class="between"><span>Réserve d'espace disque</span><span class="val" id="reserveVal">— Go</span></div>
+    <input id="reserve" type="range" min="5" max="500" step="5" />
+    <label for="quality">Qualité préférée</label>
+    <select id="quality"><option value="720p">720p</option><option value="1080p">1080p</option><option value="2160p">4K (2160p)</option></select>
+    <div class="between" style="margin-top:12px"><span>Préférer le HDR</span><button id="hdr" class="chip">Non</button></div>
+    <div class="hint">Utilisez uniquement des sources et contenus que vous êtes autorisé à récupérer.</div>
+  </section>
+
+  <section class="card">
+    <h2>📡 Sources Torznab</h2>
+    <div id="sources"></div>
+    <div class="grid" style="margin-top:8px">
+      <input id="s_name" placeholder="Nom" />
+      <input id="s_url" placeholder="URL Torznab (https://…)" inputmode="url" />
+      <input id="s_key" placeholder="Clé API (facultatif)" autocomplete="off" />
+      <input id="s_cat" placeholder="Catégories (ex. 2000,5000)" inputmode="numeric" />
+      <button class="primary" id="addSource">Ajouter la source</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>🧹 Cache</h2>
+    <div class="between"><span id="cacheInfo" class="muted">Chargement…</span><button class="danger" id="purge">Purger</button></div>
+  </section>
+</main>
+<div id="toast" class="toast" style="display:none"></div>
+
+<script>
+(function(){
+  var TKEY='sceneroot-admin-token';
+  var tokenInput=document.getElementById('token');
+  try { tokenInput.value=localStorage.getItem(TKEY)||''; } catch(e){}
+  tokenInput.addEventListener('change',function(){ try{localStorage.setItem(TKEY,tokenInput.value.trim());}catch(e){} });
+
+  function headers(json){ var h={}; if(json) h['Content-Type']='application/json'; var t=tokenInput.value.trim(); if(t) h['X-SceneRoot-Token']=t; return h; }
+  function toast(msg,ok){ var el=document.getElementById('toast'); el.textContent=msg; el.className='toast '+(ok?'ok':'err'); el.style.display='block'; clearTimeout(el._t); el._t=setTimeout(function(){el.style.display='none';},2600); }
+  async function api(method,path,body){
+    var res=await fetch(path,{method:method,headers:headers(!!body),body:body?JSON.stringify(body):undefined});
+    var data=null; try{ data=await res.json(); }catch(e){}
+    if(!res.ok){ throw new Error((data&&data.error)|| (res.status===401?'Jeton requis ou invalide':'Erreur '+res.status)); }
+    return data;
+  }
+  function fmtBytes(b){ if(!b) return '0 o'; var u=['o','Ko','Mo','Go','To']; var i=Math.min(u.length-1,Math.floor(Math.log(b)/Math.log(1024))); return (b/Math.pow(1024,i)).toFixed(i>=3?1:0)+' '+u[i]; }
+
+  var hdrOn=false;
+  function renderHdr(){ var el=document.getElementById('hdr'); el.textContent=hdrOn?'Oui':'Non'; el.className='chip'+(hdrOn?' on':''); }
+
+  async function loadStorage(){
+    try{
+      var rows=await api('GET','/api/storage');
+      var t=0,f=0,lib=0; rows.forEach(function(r){ t+=r.total; f+=r.free; lib+=r.libraryBytes; });
+      var used=Math.max(0,t-f);
+      var libPct=t?Math.min(100,lib/t*100):0, usedPct=t?Math.min(100,Math.max(0,used-lib)/t*100):0;
+      document.getElementById('storage').innerHTML= rows.length
+        ? '<div class="between"><span class="val">'+fmtBytes(used)+'</span><span class="muted">/ '+fmtBytes(t)+'</span></div>'
+          +'<div class="bar"><i class="lib" style="width:'+libPct+'%"></i><i class="used" style="width:'+usedPct+'%"></i></div>'
+          +'<div class="muted">Médiathèque '+fmtBytes(lib)+' · Libre '+fmtBytes(f)+'</div>'
+        : '<span class="muted">Aucun emplacement de stockage détecté.</span>';
+    }catch(e){ document.getElementById('storage').textContent=e.message; }
+  }
+  async function loadCache(){
+    try{ var c=await api('GET','/api/cache'); document.getElementById('cacheInfo').textContent='Cache : '+fmtBytes(c.bytes)+' · '+c.entries+' fichier(s)'; document.getElementById('purge').disabled=!c.entries; }
+    catch(e){ document.getElementById('cacheInfo').textContent=e.message; }
+  }
+  async function loadSettings(){
+    try{
+      var s=await api('GET','/api/settings');
+      document.getElementById('reserve').value=s.minFreeGb;
+      document.getElementById('reserveVal').textContent=s.minFreeGb+' Go';
+      document.getElementById('quality').value=s.preferredQuality;
+      hdrOn=!!s.preferHdr; renderHdr();
+      var host=document.getElementById('sources'); host.innerHTML='';
+      (s.envSources||[]).forEach(function(src){ host.insertAdjacentHTML('beforeend','<div class="list-item"><div class="info"><b>'+esc(src.name)+'</b><small>Configurée par l\'environnement</small></div></div>'); });
+      (s.sources||[]).forEach(function(src){ var d=document.createElement('div'); d.className='list-item'; d.innerHTML='<div class="info"><b>'+esc(src.name)+'</b><small>'+esc(src.url)+(src.hasKey?' · clé API':'')+'</small></div>'; var b=document.createElement('button'); b.className='danger'; b.textContent='Supprimer'; b.onclick=function(){ delSource(src.id); }; d.appendChild(b); host.appendChild(d); });
+      if(!(s.envSources||[]).length && !(s.sources||[]).length){ host.innerHTML='<div class="muted">Aucune source configurée.</div>'; }
+    }catch(e){ toast(e.message,false); }
+  }
+  function esc(s){ return String(s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+
+  document.getElementById('scan').addEventListener('click',async function(){ var b=this; b.disabled=true; b.textContent='Analyse…'; try{ var r=await api('POST','/api/library/scan'); toast((r.items?r.items.length:0)+' média(s) indexé(s)',true); await loadStorage(); }catch(e){ toast(e.message,false); } finally{ b.disabled=false; b.textContent='Analyser maintenant'; } });
+  document.getElementById('purge').addEventListener('click',async function(){ if(!confirm('Purger le cache de métadonnées ?')) return; try{ var r=await api('DELETE','/api/cache'); toast(r.removed+' fichier(s) supprimé(s)',true); await loadCache(); }catch(e){ toast(e.message,false); } });
+
+  var reserve=document.getElementById('reserve');
+  reserve.addEventListener('input',function(){ document.getElementById('reserveVal').textContent=reserve.value+' Go'; });
+  reserve.addEventListener('change',async function(){ try{ await api('PUT','/api/settings',{minFreeGb:Number(reserve.value)}); toast('Réserve enregistrée',true); }catch(e){ toast(e.message,false); } });
+  document.getElementById('quality').addEventListener('change',async function(){ try{ await api('PUT','/api/settings',{preferredQuality:this.value}); toast('Qualité enregistrée',true); }catch(e){ toast(e.message,false); } });
+  document.getElementById('hdr').addEventListener('click',async function(){ hdrOn=!hdrOn; renderHdr(); try{ await api('PUT','/api/settings',{preferHdr:hdrOn}); toast('Préférence HDR enregistrée',true); }catch(e){ hdrOn=!hdrOn; renderHdr(); toast(e.message,false); } });
+
+  document.getElementById('addSource').addEventListener('click',async function(){
+    var body={ name:val('s_name'), url:val('s_url'), apiKey:val('s_key'), categories:val('s_cat') };
+    if(!body.name||!body.url){ toast('Nom et URL requis',false); return; }
+    this.disabled=true;
+    try{ await api('POST','/api/sources',body); ['s_name','s_url','s_key','s_cat'].forEach(function(id){document.getElementById(id).value='';}); toast('Source ajoutée',true); await loadSettings(); }
+    catch(e){ toast(e.message,false); } finally{ this.disabled=false; }
+  });
+  function val(id){ return document.getElementById(id).value.trim(); }
+  async function delSource(id){ if(!confirm('Supprimer cette source ?')) return; try{ await api('DELETE','/api/sources/'+encodeURIComponent(id)); toast('Source supprimée',true); await loadSettings(); }catch(e){ toast(e.message,false); } }
+
+  loadStorage(); loadCache(); loadSettings();
+})();
+</script>
+</body>
+</html>

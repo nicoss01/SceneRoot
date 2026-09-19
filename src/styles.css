@@ -388,6 +388,9 @@ section { margin: 0 0 13px; }
 .source-form input { padding: 9px 11px; background: rgba(5,17,30,.8); border: 1px solid #23405c; border-radius: 8px; color: inherit; }
 .reserve-field { display: block; }
 .reserve-field input { width: 100%; margin-top: 8px; }
+.mobile-access .qr-wrap { display: flex; justify-content: center; padding: 14px 0; }
+.mobile-access .qr-wrap svg { border-radius: 10px; box-shadow: 0 8px 24px #0008; }
+.mobile-access .path { word-break: break-all; }
 .sources > small { display: block; margin-top: 17px; }
 
 .spin { animation: spin 1s linear infinite; }
