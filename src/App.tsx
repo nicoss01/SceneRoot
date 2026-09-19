@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Route, Routes, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, BarChart3, Check, ChevronDown, ChevronRight, ChevronsUp, ChevronUp, Clock3, Download, Film, FolderOpen, HardDrive, Heart, Hourglass, Lock, Monitor, Pause, Pencil, Play, Plus, RefreshCw, RotateCcw, Search, ShieldCheck, Sparkles, Star, Subtitles, Timer, Trash2, Tv, Users, Volume2, Wifi, WandSparkles, X } from 'lucide-react';
+import { ArrowLeft, BarChart3, Check, ChevronDown, ChevronRight, ChevronsUp, ChevronUp, Clock3, Download, Eye, EyeOff, Film, FolderOpen, HardDrive, Heart, Hourglass, Lock, Monitor, Pause, Pencil, Play, Plus, RefreshCw, RotateCcw, Search, ShieldCheck, Sparkles, Star, Subtitles, Timer, Trash2, Tv, Users, Volume2, Wifi, WandSparkles, X } from 'lucide-react';
 import { Brand } from './components/Brand';
 import { MediaCard } from './components/MediaCard';
 import { MetadataMatcher } from './components/MetadataMatcher';
@@ -17,6 +17,7 @@ import { useLibraryGroup } from './hooks/useLibraryGroup';
 import { useSeriesEpisodes } from './hooks/useSeriesEpisodes';
 import { usePlayerChrome } from './hooks/usePlayerChrome';
 import { useResolvedMedia } from './hooks/useResolvedMedia';
+import { usePreferences } from './hooks/usePreferences';
 import { formatBytes } from './lib/format';
 import { matchesDuration, matchesSearchFilters, type DurationBucket } from './lib/filters';
 import { DownloadPanel } from './components/DownloadPanel';
@@ -80,10 +81,11 @@ function RemoteSection({ title, fallback, onOpen, kind }: { title:string; fallba
 
 function HomePage({profile}:{profile:Profile}) {
   const navigate = useNavigate(); const open = (m: MediaItem) => navigate(`/title/${m.id}`);
-  const resume = useResume(profile.id);
+  const resume = useResume(profile.id); const {hidden}=usePreferences(profile.id);
+  const resumeItems=resume.items.filter(m=>!hidden.has(m.id));
   return <>
     <div className="welcome home-welcome"><h1>Bonsoir, {profile.name}</h1><p>De belles histoires vous attendent.</p></div>
-    {resume.items.length>0&&<Section title="Reprendre la lecture" items={resume.items.slice(0,6)} onOpen={open} wide />}
+    {resumeItems.length>0&&<Section title="Reprendre la lecture" items={resumeItems.slice(0,6)} onOpen={open} wide />}
     <RemoteSection title="Dernières sorties" fallback={media.slice(4,10)} onOpen={open} />
     <RemoteSection title="Films à découvrir" fallback={media.filter(m=>m.kind==='film').slice(0,6)} onOpen={open} kind="film" />
     <RemoteSection title="Séries à découvrir" fallback={media.filter(m=>m.kind==='serie').slice(0,6)} onOpen={open} kind="serie" />
@@ -131,9 +133,9 @@ function SearchPage() {
 
 type Mood = 'Détente'|'Action'|'Émotion'|'Frissons'|'Découverte';
 type ScoredMedia = { item:MediaItem; score:number; affinities:number[]; minAffinity:number; seenCount:number };
-function TonightPage({availableProfiles}:{availableProfiles:Profile[]}) {
+function TonightPage({availableProfiles,profile}:{availableProfiles:Profile[];profile:Profile}) {
   const navigate=useNavigate();
-  const library=useLibrary();
+  const library=useLibrary(); const {hidden}=usePreferences(profile.id);
   const [selected,setSelected]=useState(()=>availableProfiles.slice(0,3).map(profile=>profile.id));
   const [kind,setKind]=useState<'film'|'serie'|'any'>('any');
   const [duration,setDuration]=useState<'short'|'medium'|'any'>('any');
@@ -144,8 +146,8 @@ function TonightPage({availableProfiles}:{availableProfiles:Profile[]}) {
   const demoMode=!library.loading&&library.items.length===0;
   const pool=useMemo(()=>{
     const base=library.items.length?library.items:media;
-    return base.filter(m=>(kind==='any'||m.kind===kind)&&(!genre||m.genres.includes(genre))&&matchesDuration(m,duration));
-  },[library.items,kind,genre,duration]);
+    return base.filter(m=>(kind==='any'||m.kind===kind)&&(!genre||m.genres.includes(genre))&&matchesDuration(m,duration)&&!hidden.has(m.id));
+  },[library.items,kind,genre,duration,hidden]);
   useEffect(()=>{
     let active=true;
     if(!pool.length){setScored([]);return}
@@ -181,6 +183,7 @@ function DetailPage({profile}:{profile:Profile}) {
   const { id } = useParams(); const navigate = useNavigate(); const {item,isLocal}=useResolvedMedia(id);
   const isLocalSeries=isLocal&&item.kind==='serie';
   const [downloadMode,setDownloadMode]=useState<'later'|'play'|null>(null);const [chosenVersion,setChosenVersion]=useState<string|undefined>();
+  const prefs=usePreferences(profile.id);const isFavorite=prefs.favorites.has(item.id);const isHidden=prefs.hidden.has(item.id);
   const {detail}=useLibraryGroup(id,profile.id,isLocal);
   const series=useSeriesEpisodes(id,profile.id,isLocalSeries,item.title,item.art);
   const richEpisodes=series.seasons.flatMap(season=>season.episodes);
@@ -195,7 +198,7 @@ function DetailPage({profile}:{profile:Profile}) {
     <button className="back focusable" onClick={()=>navigate(-1)}><ArrowLeft/> Retour</button>
     <div className="detail__symbol">{item.symbol}<i/></div><div className="detail__content"><span className="eyebrow">{item.kind === 'film' ? 'FILM' : 'SÉRIE'} · {item.year}</span><h1>{item.title}</h1>
     <div className="detail__meta"><Star fill="currentColor"/> {item.rating>0?`${item.rating}/10`:'Non noté'} <span>{item.duration}</span><span>{item.quality}</span></div><p>{item.description}</p><div className="detail__genres">{item.genres.map(g=><span key={g}>{g}</span>)}</div>{item.sourceUrl&&<a className="source-link" href={item.sourceUrl} target="_blank" rel="noreferrer">Informations : {item.informationSource??(item.source==='tvmaze'?'TVmaze':item.source==='wikipedia'?'Wikipédia':'TMDB')}</a>}
-    <div className="actions">{isLocal?<button className="primary focusable" onClick={()=>navigate(`/player/${playTarget}`)}><Play fill="currentColor"/> {playLabel}</button>:<><button className="primary focusable" onClick={()=>setDownloadMode('play')}><Play fill="currentColor"/> Télécharger et lancer la lecture</button><button className="secondary focusable" onClick={()=>setDownloadMode('later')}><Download/> Télécharger pour plus tard</button></>}<button className="icon-btn focusable"><Heart/></button></div>
+    <div className="actions">{isLocal?<button className="primary focusable" onClick={()=>navigate(`/player/${playTarget}`)}><Play fill="currentColor"/> {playLabel}</button>:<><button className="primary focusable" onClick={()=>setDownloadMode('play')}><Play fill="currentColor"/> Télécharger et lancer la lecture</button><button className="secondary focusable" onClick={()=>setDownloadMode('later')}><Download/> Télécharger pour plus tard</button></>}<button className={`icon-btn focusable ${isFavorite?'is-fav':''}`} title={isFavorite?'Retirer des favoris':'Ajouter aux favoris'} onClick={()=>void prefs.set(item.id,{favorite:!isFavorite})}><Heart fill={isFavorite?'currentColor':'none'}/></button><button className="icon-btn focusable" title={isHidden?'Ne plus masquer':'Masquer ce contenu'} onClick={()=>void prefs.set(item.id,{hidden:!isHidden})}>{isHidden?<Eye/>:<EyeOff/>}</button></div>
     {item.kind==='film'&&filmVersions.length>1&&<div className="versions"><h3>{filmVersions.length} versions disponibles</h3><div className="version-list">{filmVersions.map(version=><button className={`version focusable ${activeVersion===version.id?'is-selected':''}`} key={version.id} onClick={()=>setChosenVersion(version.id)}>{versionLabel(version)}{activeVersion===version.id&&<Check/>}</button>)}</div></div>}
     {downloadMode&&<DownloadPanel item={item} priority={downloadMode==='play'} onQueued={downloadMode==='play'?torrentId=>{setDownloadMode(null);navigate(torrentId!=null?`/stream/${torrentId}`:'/downloads')}:undefined} onClose={()=>setDownloadMode(null)}/>}
     {isLocalSeries&&(series.loading||series.seasons.length>0)&&<div className="episodes"><div className="episodes-head"><h2>Épisodes</h2>{series.source&&<span>Infos épisodes : {series.source}</span>}</div>{series.loading&&!series.seasons.length&&<div className="library-loading"><i/>Chargement des épisodes…</div>}{series.seasons.map(season=><div className="season" key={season.season}><h3>Saison {season.season} · {season.episodes.length} épisode{season.episodes.length>1?'s':''}</h3><div className="episode-cards">{season.episodes.map(episode=><button className={`episode-card focusable ${episode.id===nextId?'is-next':''}`} key={episode.id} onClick={()=>navigate(`/player/${episode.id}`)}><div className="episode-still" style={{'--a':item.palette[0],'--b':item.palette[1]} as React.CSSProperties}>{episode.still?<img src={episode.still} alt="" loading="lazy" decoding="async" onError={event=>{event.currentTarget.style.display='none'}}/>:<span>{item.symbol}</span>}<span className="episode-play"><Play size={18} fill="currentColor"/></span>{episode.progress>0.02&&<i className="episode-progress" style={{width:`${Math.min(100,Math.round(episode.progress*100))}%`}}/>}</div><div className="episode-body"><strong>E{String(episode.episode).padStart(2,'0')} · {episode.title}{episode.id===nextId&&<em> · à suivre</em>}{episode.versions>1&&<em> · {episode.versions} versions</em>}</strong>{episode.overview&&<p>{episode.overview}</p>}</div></button>)}</div></div>)}</div>}</div>
@@ -268,7 +271,7 @@ function RatingPage({profile}:{profile:Profile}) {
   return <div className="rating-page" style={{backgroundImage:`linear-gradient(90deg,rgba(2,8,17,.72),rgba(2,8,17,.58)),url('${item.art??'/assets/sceneroot-landscape.png'}')`}}><Brand compact/><div className="rating-card"><span className="rating-icon"><Film/></span><h1>Vous avez terminé<br/>« {item.title} »</h1><p>Merci d’avoir regardé ! Que pensez-vous de ce {item.kind==='film'?'film':'programme'} ?</p><div className="stars">{[1,2,3,4,5].map(value=><button key={value} onClick={()=>setScore(value)} aria-label={`${value} étoile${value>1?'s':''}`}><Star fill={value<=score?'currentColor':'transparent'}/></button>)}</div><strong>{score} / 5 — {score===5?'Excellent':score===4?'Très bien':score===3?'Bien':score===2?'Moyen':'Décevant'}</strong><div className="rating-tags"><button className={tags.includes('À revoir')?'on':''} onClick={()=>toggle('À revoir')}><RotateCcw/>À revoir</button><button className={tags.includes('Émouvant')?'on':''} onClick={()=>toggle('Émouvant')}><Heart/>Émouvant</button><button className={tags.includes('Surprenant')?'on':''} onClick={()=>toggle('Surprenant')}><Sparkles/>Surprenant</button><button className={tags.includes('Trop long')?'on':''} onClick={()=>toggle('Trop long')}><Hourglass/>Trop long</button></div><div className="rating-actions"><button className="primary" onClick={save} disabled={saving}><Star fill="currentColor"/>{saving?'Enregistrement…':'Noter maintenant'}</button><button className="secondary" onClick={()=>navigate('/')}><Clock3/>Plus tard</button></div><small><Users/>Vos avis nous aident à proposer des recommandations plus personnalisées.</small></div></div>;
 }
 
-type RootsTab='all'|'film'|'serie'|'rated'|'stats';
+type RootsTab='all'|'film'|'serie'|'favorites'|'rated'|'stats';
 type ProfileStats={watched:number;rated:number;averageRating:number|null;films:number;series:number;topGenres:{genre:string;count:number}[];topTags:{tag:string;count:number}[];activity:{month:string;count:number}[];genreTimeline:{genre:string;total:number;months:number[]}[]};
 const monthLabels=['Jan','Fév','Mar','Avr','Mai','Juin','Juil','Août','Sep','Oct','Nov','Déc'];
 function RootsStats({profile}:{profile:Profile}){
@@ -288,9 +291,11 @@ function RootsStats({profile}:{profile:Profile}){
   </div>;
 }
 function RootsPage({profile}:{profile:Profile}) {
-  const navigate=useNavigate(); const history=useHistory(profile.id); const [tab,setTab]=useState<RootsTab>('all');
-  const filtered=history.items.filter(item=>tab==='all'?true:tab==='rated'?item.rating>0:item.kind===tab);
-  const tabs:[RootsTab,string,React.ReactNode][]=[['all','Déjà vus',<Clock3/>],['film','Films',<Film/>],['serie','Séries',<Tv/>],['rated','Favoris notés',<Heart/>],['stats','Statistiques',<BarChart3/>]];
+  const navigate=useNavigate(); const history=useHistory(profile.id); const {favorites,hidden}=usePreferences(profile.id); const [tab,setTab]=useState<RootsTab>('all');
+  const visible=history.items.filter(item=>!hidden.has(item.id));
+  const favItems=[...favorites].map(favId=>({favId,item:resolveMedia(favId)})).filter(entry=>entry.item.id===entry.favId).map(entry=>entry.item);
+  const filtered=tab==='favorites'?favItems.filter(item=>!hidden.has(item.id)):visible.filter(item=>tab==='all'?true:tab==='rated'?item.rating>0:item.kind===tab);
+  const tabs:[RootsTab,string,React.ReactNode][]=[['all','Déjà vus',<Clock3/>],['film','Films',<Film/>],['serie','Séries',<Tv/>],['favorites','Favoris',<Heart/>],['rated','Notés',<Star/>],['stats','Statistiques',<BarChart3/>]];
   return <><div className="welcome"><h1>Mes <em>Roots</em></h1><p>Votre historique de visionnage personnel.</p></div>
     <div className="stat-tabs">{tabs.map(([value,label,icon])=><button className={tab===value?'is-on':''} key={value} onClick={()=>setTab(value)}>{icon}{label}</button>)}</div>
     {tab==='stats'?<RootsStats profile={profile}/>:<>
@@ -400,7 +405,7 @@ function App() {
   if(!profile)return <ProfileGate availableProfiles={availableProfiles} onSaved={upsertProfile} onDeleted={removeProfile} onSelect={p=>{localStorage.setItem('sceneroot-profile',JSON.stringify(p));setProfile(p)}}/>;
   const switchProfile=()=>{localStorage.removeItem('sceneroot-profile');setProfile(null)};
   return <Routes><Route path="/player/:id" element={<PlayerPage profile={profile}/>}/><Route path="/stream/:id" element={<StreamPlayerPage profile={profile}/>}/><Route path="/rate/:id" element={<RatingPage profile={profile}/>}/><Route path="/title/:id" element={<Shell profile={profile} onSwitchProfile={switchProfile}><DetailPage profile={profile}/></Shell>}/><Route path="*" element={<Shell profile={profile} onSwitchProfile={switchProfile}><Routes>
-    <Route path="/" element={<HomePage profile={profile}/>}/><Route path="/films" element={<BrowsePage kind="film" title="Films"/>}/><Route path="/series" element={<BrowsePage kind="serie" title="Séries"/>}/><Route path="/discover" element={<BrowsePage title="Découvrir"/>}/><Route path="/tonight" element={<TonightPage availableProfiles={availableProfiles}/>}/><Route path="/library" element={<LibraryPage/>}/><Route path="/downloads" element={<DownloadsPage/>}/><Route path="/roots" element={<RootsPage profile={profile}/>}/><Route path="/search" element={<SearchPage/>}/><Route path="/settings" element={<SettingsPage/>}/><Route path="/about" element={<AboutPage/>}/>
+    <Route path="/" element={<HomePage profile={profile}/>}/><Route path="/films" element={<BrowsePage kind="film" title="Films"/>}/><Route path="/series" element={<BrowsePage kind="serie" title="Séries"/>}/><Route path="/discover" element={<BrowsePage title="Découvrir"/>}/><Route path="/tonight" element={<TonightPage availableProfiles={availableProfiles} profile={profile}/>}/><Route path="/library" element={<LibraryPage/>}/><Route path="/downloads" element={<DownloadsPage/>}/><Route path="/roots" element={<RootsPage profile={profile}/>}/><Route path="/search" element={<SearchPage/>}/><Route path="/settings" element={<SettingsPage/>}/><Route path="/about" element={<AboutPage/>}/>
   </Routes></Shell>}/></Routes>;
 }
 export default App;

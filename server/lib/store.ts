@@ -10,10 +10,12 @@ export interface StoredDb {
   playback: Record<string, unknown>;
   guests: Array<{ id: string } & Record<string, unknown>>;
   settings: Record<string, unknown>;
+  favorites: Array<{ profileId: string; mediaId: string } & Record<string, unknown>>;
+  hidden: Array<{ profileId: string; mediaId: string } & Record<string, unknown>>;
 }
 export interface Store { backend: 'sqlite' | 'json'; load(): StoredDb; save(db: StoredDb): void; }
 
-const EMPTY: StoredDb = { profiles: [], library: [], ratings: [], playback: {}, guests: [], settings: {} };
+const EMPTY: StoredDb = { profiles: [], library: [], ratings: [], playback: {}, guests: [], settings: {}, favorites: [], hidden: [] };
 
 function jsonStore(jsonPath: string): Store {
   return {
@@ -46,6 +48,8 @@ export function createStore(dataDir: string): Store {
     CREATE TABLE IF NOT EXISTS playback(key TEXT PRIMARY KEY, data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS guests(id TEXT PRIMARY KEY, data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY, v TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS favorites(profileId TEXT NOT NULL, mediaId TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(profileId, mediaId));
+    CREATE TABLE IF NOT EXISTS hidden(profileId TEXT NOT NULL, mediaId TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(profileId, mediaId));
   `);
 
   const jsonRows = (sql: string) => (db.prepare(sql).all() as Array<{ data: string }>).map(row => JSON.parse(row.data));
@@ -61,6 +65,8 @@ export function createStore(dataDir: string): Store {
         library: jsonRows('SELECT data FROM library'),
         ratings: jsonRows('SELECT data FROM ratings'),
         guests: jsonRows('SELECT data FROM guests'),
+        favorites: jsonRows('SELECT data FROM favorites'),
+        hidden: jsonRows('SELECT data FROM hidden'),
         playback,
         settings: settingsRow ? JSON.parse(settingsRow.v) : {},
       };
@@ -68,7 +74,7 @@ export function createStore(dataDir: string): Store {
     save(data) {
       db.exec('BEGIN IMMEDIATE');
       try {
-        db.exec('DELETE FROM profiles; DELETE FROM library; DELETE FROM ratings; DELETE FROM playback; DELETE FROM guests; DELETE FROM settings');
+        db.exec('DELETE FROM profiles; DELETE FROM library; DELETE FROM ratings; DELETE FROM playback; DELETE FROM guests; DELETE FROM settings; DELETE FROM favorites; DELETE FROM hidden');
         const insProfile = db.prepare('INSERT OR REPLACE INTO profiles(id, data) VALUES(?, ?)');
         for (const profile of data.profiles ?? []) insProfile.run(String(profile.id), JSON.stringify(profile));
         const insLibrary = db.prepare('INSERT OR REPLACE INTO library(id, data) VALUES(?, ?)');
@@ -80,6 +86,10 @@ export function createStore(dataDir: string): Store {
         const insGuest = db.prepare('INSERT OR REPLACE INTO guests(id, data) VALUES(?, ?)');
         for (const guest of data.guests ?? []) insGuest.run(String(guest.id), JSON.stringify(guest));
         db.prepare('INSERT OR REPLACE INTO settings(k, v) VALUES(?, ?)').run('app', JSON.stringify(data.settings ?? {}));
+        const insFavorite = db.prepare('INSERT OR REPLACE INTO favorites(profileId, mediaId, data) VALUES(?, ?, ?)');
+        for (const favorite of data.favorites ?? []) insFavorite.run(String(favorite.profileId), String(favorite.mediaId), JSON.stringify(favorite));
+        const insHidden = db.prepare('INSERT OR REPLACE INTO hidden(profileId, mediaId, data) VALUES(?, ?, ?)');
+        for (const entry of data.hidden ?? []) insHidden.run(String(entry.profileId), String(entry.mediaId), JSON.stringify(entry));
         db.exec('COMMIT');
       } catch (error) { db.exec('ROLLBACK'); throw error; }
     },

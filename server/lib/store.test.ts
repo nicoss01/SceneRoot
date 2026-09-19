@@ -15,6 +15,8 @@ const sample: StoredDb = {
   playback: { 'p1:m1': { position: 42, duration: 100, updatedAt: '2024-01-01T00:00:00Z' } },
   guests: [{ id: 'g1', ageLimit: 13 }],
   settings: { minFreeGb: 80, setupComplete: true },
+  favorites: [{ profileId: 'p1', mediaId: 'm1', at: '2024-01-01T00:00:00Z' }],
+  hidden: [{ profileId: 'p1', mediaId: 'm2', at: '2024-01-02T00:00:00Z' }],
 };
 
 describe('createStore (sqlite)', () => {
