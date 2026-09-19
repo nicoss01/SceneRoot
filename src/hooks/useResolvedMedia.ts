@@ -6,9 +6,9 @@ import type { MediaItem } from '../types';
 /**
  * Resolves the MediaItem for a route id. resolveMedia only knows items cached in
  * sessionStorage during in-app navigation, so a direct load or page refresh of
- * /player/:id or /title/:id would otherwise fall back to demo content. When the
- * cache misses, we fetch the library group by id so real local media stays
- * playable across reloads.
+ * /player/:id or /title/:id would otherwise have only a neutral unresolved
+ * placeholder. When the cache misses, we fetch the library group by id so real
+ * local media stays playable across reloads.
  */
 export function useResolvedMedia(id: string | undefined) {
   const initial = resolveMedia(id);

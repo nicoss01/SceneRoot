@@ -1,4 +1,3 @@
-import { media as demoMedia } from './demo';
 import type { MediaItem } from '../types';
 
 const storageKey = 'sceneroot-catalog-items';
@@ -14,13 +13,11 @@ export function rememberCatalogItems(items: MediaItem[]) {
 }
 
 export function resolveMedia(id?: string): MediaItem {
-  const local = demoMedia.find(item => item.id === id);
-  if (local) return local;
   try {
     const remembered = JSON.parse(sessionStorage.getItem(storageKey) ?? '{}') as Record<string, MediaItem>;
     if (id && remembered[id]) return remembered[id];
   } catch {
-    // Fall through to a stable local item.
+    // Fall through to a neutral placeholder while the API resolves the route.
   }
-  return demoMedia[0];
+  return { id:id??'unknown', title:'Média indisponible', kind:'film', year:0, genres:[], duration:'—', rating:0, quality:'1080p', description:'Ce média n’est pas disponible dans le catalogue actuel.', palette:['#0e2236','#07111d'], symbol:'?', source:'local' };
 }

@@ -1,0 +1,25 @@
+[Unit]
+Description=SceneRoot direct TV kiosk (Cage/Wayland)
+After=systemd-user-sessions.service network-online.target sceneroot.service sceneroot-cec.service seatd.service
+Wants=network-online.target sceneroot.service sceneroot-cec.service seatd.service
+Conflicts=getty@tty1.service display-manager.service
+
+[Service]
+Type=simple
+User=@SCENEROOT_USER@
+PAMName=login
+TTYPath=/dev/tty1
+StandardInput=tty-force
+StandardOutput=journal
+StandardError=journal
+UtmpIdentifier=tty1
+RuntimeDirectory=sceneroot-kiosk
+RuntimeDirectoryMode=0700
+Environment=XDG_RUNTIME_DIR=/run/sceneroot-kiosk
+Environment=WAYLAND_DISPLAY=wayland-0
+ExecStart=/usr/bin/cage -s -- /opt/sceneroot/scripts/kiosk.sh
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

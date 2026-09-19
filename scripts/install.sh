@@ -65,6 +65,7 @@ if have whiptail && [[ -t 0 ]]; then USE_TUI=1; fi
 CFG_MEDIA="${SCENEROOT_MEDIA:-/mnt/media}"
 CFG_TMDB="${TMDB_API_KEY:-}"
 CFG_TOKEN="${SCENEROOT_ADMIN_TOKEN:-}"
+CFG_KIOSK_MODE="${SCENEROOT_KIOSK_MODE:-direct}"
 
 if [[ "$USE_TUI" == 1 ]]; then
   CFG_MEDIA=$(whiptail --title "SceneRoot" --inputbox "Dossier(s) média à indexer (séparés par des virgules) :" 10 70 "$CFG_MEDIA" 3>&1 1>&2 2>&3) || die "Installation annulée."
@@ -72,18 +73,33 @@ if [[ "$USE_TUI" == 1 ]]; then
   if whiptail --title "SceneRoot" --yesno "Autoriser la configuration à distance depuis un mobile ?\n(génère un jeton d'administration)" 10 70; then
     [[ -z "$CFG_TOKEN" ]] && CFG_TOKEN="$(head -c 18 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 24)"
   fi
+  if whiptail --title "SceneRoot" --yesno "Lancer SceneRoot directement sur la TV sans bureau Ubuntu ?\n\nOui : kiosque léger Cage/Wayland (recommandé)\nNon : démarrage dans la session graphique existante" 13 74; then
+    CFG_KIOSK_MODE=direct
+  else
+    CFG_KIOSK_MODE=desktop
+  fi
 else
   info "Mode non-interactif — valeurs par défaut / variables d'environnement."
 fi
 ok "Médias : $CFG_MEDIA"
 [[ -n "$CFG_TMDB" ]] && ok "TMDB : configuré" || info "TMDB : non configuré (repli Wikipédia + TVmaze)"
 [[ -n "$CFG_TOKEN" ]] && ok "Admin mobile : activé" || info "Admin mobile : réglages locaux uniquement"
+[[ "$CFG_KIOSK_MODE" == "direct" ]] && ok "Affichage : kiosque TV direct (sans bureau)" || ok "Affichage : session graphique existante"
 
 # ── Étape 2 : paquets système ────────────────────────────────────────────────
 step "Installation des paquets système"
 run "Mise à jour des dépôts" sudo apt-get update -qq
-run "git, chromium, ffmpeg, mpv, socat, cec-utils, transmission" \
-  sudo apt-get install -y -qq git curl cec-utils chromium ffmpeg mpv socat transmission-daemon
+run "Composants système, vidéo, CEC et kiosque Wayland" \
+  sudo apt-get install -y -qq git curl cec-utils ffmpeg mpv socat transmission-daemon cage seatd python3-evdev
+if ! have chromium && ! have chromium-browser; then
+  if apt-cache show chromium >/dev/null 2>&1; then
+    run "Chromium" sudo apt-get install -y -qq chromium
+  elif have snap; then
+    run "Chromium (snap Ubuntu)" sudo snap install chromium
+  else
+    run "Chromium" sudo apt-get install -y -qq chromium-browser
+  fi
+fi
 
 # ── Étape 3 : Node.js ────────────────────────────────────────────────────────
 step "Node.js 22"
@@ -110,7 +126,7 @@ cd "$APP_DIR"
 step "Dépendances et compilation"
 run "npm ci" npm ci --no-audit --no-fund
 run "npm run build" npm run build
-chmod +x scripts/update.sh scripts/kiosk.sh
+chmod +x scripts/update.sh scripts/kiosk.sh scripts/cec-input.py
 
 # ── Étape 6 : configuration persistante ──────────────────────────────────────
 step "Écriture de la configuration ($ENV_FILE)"
@@ -119,6 +135,7 @@ sudo chown -R "$USER":"$USER" /var/lib/sceneroot
 {
   echo "# Généré par install.sh — $(date -Iseconds)"
   echo "SCENEROOT_MEDIA=$CFG_MEDIA"
+  echo "SCENEROOT_KIOSK_MODE=$CFG_KIOSK_MODE"
   [[ -n "$CFG_TMDB" ]]  && echo "TMDB_API_KEY=$CFG_TMDB"
   [[ -n "$CFG_TOKEN" ]] && echo "SCENEROOT_ADMIN_TOKEN=$CFG_TOKEN"
 } | sudo tee "$ENV_FILE" >/dev/null
@@ -129,15 +146,29 @@ ok "Configuration enregistrée"
 step "Services systemd"
 sed "s/@SCENEROOT_USER@/$USER/g" scripts/sceneroot.service | sudo tee /etc/systemd/system/sceneroot.service >/dev/null
 sed "s/@SCENEROOT_USER@/$USER/g" scripts/sceneroot-update.service | sudo tee /etc/systemd/system/sceneroot-update.service >/dev/null
+sed "s/@SCENEROOT_USER@/$USER/g" scripts/sceneroot-kiosk.service | sudo tee /etc/systemd/system/sceneroot-kiosk.service >/dev/null
+sudo cp scripts/sceneroot-cec.service /etc/systemd/system/sceneroot-cec.service
 sudo cp scripts/sceneroot-update.timer /etc/systemd/system/sceneroot-update.timer
+echo uinput | sudo tee /etc/modules-load.d/sceneroot-uinput.conf >/dev/null
+sudo modprobe uinput || warn "Le module uinput sera chargé au prochain démarrage."
+for group in video render input seat; do getent group "$group" >/dev/null && sudo usermod -aG "$group" "$USER"; done
 run "Rechargement de systemd" sudo systemctl daemon-reload
-run "Activation des services" sudo systemctl enable --now sceneroot.service sceneroot-update.timer
+run "Activation du serveur, des mises à jour et du pont CEC" sudo systemctl enable --now sceneroot.service sceneroot-update.timer sceneroot-cec.service
 
 # ── Étape 8 : kiosque ────────────────────────────────────────────────────────
 step "Interface TV (kiosque Chromium)"
-install -Dm755 scripts/kiosk.sh "$HOME/.local/bin/sceneroot-kiosk"
-install -Dm644 scripts/sceneroot-kiosk.desktop "$HOME/.config/autostart/sceneroot-kiosk.desktop"
-ok "Chromium se lancera à l'ouverture de la session graphique"
+if [[ "$CFG_KIOSK_MODE" == "direct" ]]; then
+  rm -f "$HOME/.config/autostart/sceneroot-kiosk.desktop"
+  sudo systemctl disable display-manager.service >/dev/null 2>&1 || true
+  sudo systemctl set-default multi-user.target >/dev/null
+  run "Activation du kiosque direct sur tty1" sudo systemctl enable sceneroot-kiosk.service
+  ok "Cage et Chromium démarreront directement sur la TV au prochain redémarrage"
+else
+  sudo systemctl disable sceneroot-kiosk.service >/dev/null 2>&1 || true
+  install -Dm755 scripts/kiosk.sh "$HOME/.local/bin/sceneroot-kiosk"
+  install -Dm644 scripts/sceneroot-kiosk.desktop "$HOME/.config/autostart/sceneroot-kiosk.desktop"
+  ok "Chromium se lancera à l'ouverture de la session graphique"
+fi
 
 # ── Étape 9 : vérification ───────────────────────────────────────────────────
 step "Vérification"
@@ -154,7 +185,7 @@ echo "${C_GREEN}${C_BOLD}  ╭────────────────�
 echo "${C_GREEN}${C_BOLD}  │  SceneRoot est installé.                                 │${C_RESET}"
 echo "${C_GREEN}${C_BOLD}  ╰──────────────────────────────────────────────────────────╯${C_RESET}"
 echo
-echo "  ${C_BOLD}Interface TV${C_RESET}    : http://127.0.0.1:4174  (kiosque au prochain démarrage graphique)"
+echo "  ${C_BOLD}Interface TV${C_RESET}    : http://127.0.0.1:4174  (kiosque au prochain redémarrage)"
 echo "  ${C_BOLD}Depuis le réseau${C_RESET}: http://${IP}:4174"
 echo "  ${C_BOLD}Réglages mobile${C_RESET} : http://${IP}:4174/admin.html"
 [[ -n "$CFG_TOKEN" ]] && echo "  ${C_BOLD}Jeton admin${C_RESET}     : ${C_YELLOW}${CFG_TOKEN}${C_RESET}  ${C_DIM}(à saisir sur le mobile)${C_RESET}"

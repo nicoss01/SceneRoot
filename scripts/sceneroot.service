@@ -11,6 +11,8 @@ Environment=NODE_ENV=production
 Environment=SCENEROOT_DATA=/var/lib/sceneroot
 Environment=SCENEROOT_MEDIA=/mnt/media,/media/%u
 Environment=DISPLAY=:0
+Environment=XDG_RUNTIME_DIR=/run/sceneroot-kiosk
+Environment=WAYLAND_DISPLAY=wayland-0
 EnvironmentFile=-/etc/sceneroot.env
 ExecStart=/usr/bin/node --import tsx server/index.ts
 Restart=on-failure

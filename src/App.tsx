@@ -7,7 +7,6 @@ import { MetadataMatcher } from './components/MetadataMatcher';
 import { ProfileAvatar } from './components/ProfileAvatar';
 import { ProfileEditor } from './components/ProfileEditor';
 import { Shell } from './components/Shell';
-import { media, profiles } from './data/demo';
 import { resolveMedia } from './data/catalog';
 import { allGenres } from './data/genres';
 import { useCatalog } from './hooks/useCatalog';
@@ -46,7 +45,6 @@ function BootScreen() {
 }
 
 function ProfileGate({ onSelect, availableProfiles, onSaved, onDeleted }: { onSelect: (profile: Profile) => void; availableProfiles:Profile[]; onSaved:(profile:Profile)=>void; onDeleted:(profile:Profile)=>void }) {
-  const isDefault=(id:string)=>profiles.some(base=>base.id===id);
   const [modal,setModal]=useState<'guest'|'profile'|'unlock'|null>(null);
   const [editing,setEditing]=useState<Profile|undefined>(); const [unlocking,setUnlocking]=useState<Profile|undefined>();
   const [pin,setPin]=useState(''); const [unlockError,setUnlockError]=useState('');
@@ -62,7 +60,7 @@ function ProfileGate({ onSelect, availableProfiles, onSaved, onDeleted }: { onSe
       <button className="profile-edit focusable" title={`Modifier le profil ${profile.name}`} aria-label={`Modifier le profil ${profile.name}`} onClick={()=>{setEditing(profile);setModal('profile')}}><Pencil/></button>
     </div>)}</div>
     <div className="gate-actions"><button className="add-profile focusable" onClick={()=>{setEditing(undefined);setModal('profile')}}><Plus /> Ajouter un profil</button><button className="add-profile focusable" onClick={()=>setModal('guest')}><Users/> Invité</button></div>
-    {modal==='profile'&&<ProfileEditor profile={editing} deletable={editing?!isDefault(editing.id):false} onClose={()=>setModal(null)} onSaved={saved=>{onSaved(saved);setModal(null);if(!editing)onSelect(saved)}} onDeleted={deleted=>{onDeleted(deleted);setModal(null)}}/>}
+    {modal==='profile'&&<ProfileEditor profile={editing} deletable={Boolean(editing)} onClose={()=>setModal(null)} onSaved={saved=>{onSaved(saved);setModal(null);if(!editing)onSelect(saved)}} onDeleted={deleted=>{onDeleted(deleted);setModal(null)}}/>}
     {modal==='guest'&&<div className="modal-backdrop"><div className="profile-modal"><button className="modal-close" onClick={()=>setModal(null)}><X/></button><span className="modal-icon"><Users/></span><h2>Session invitée</h2><p>Cette session ne modifiera pas les recommandations de la famille.</p><label>Limite d’âge<select value={age} onChange={e=>setAge(Number(e.target.value))}><option value="18">Tout public</option><option value="10">-10</option><option value="13">-13</option><option value="16">-16</option></select></label><label>Conserver le profil<select value={guestTtl} onChange={e=>setGuestTtl(e.target.value)}><option value="shutdown">Jusqu’à extinction</option><option value="24h">24 heures</option><option value="7d">7 jours</option><option value="permanent">Conserver ce profil</option></select></label><button className="primary modal-submit" onClick={createGuest}>Commencer</button></div></div>}
     {modal==='unlock'&&unlocking&&<div className="modal-backdrop"><div className="profile-modal unlock-modal"><button className="modal-close" onClick={()=>setModal(null)}><X/></button><ProfileAvatar profile={unlocking}/><h2>{unlocking.name}</h2><p>Entrez le code de verrouillage de ce profil.</p><label>Code<input autoFocus type="password" inputMode="numeric" value={pin} onChange={event=>setPin(event.target.value.replace(/\D/g,'').slice(0,8))} onKeyDown={event=>{if(event.key==='Enter')void unlock()}}/></label>{unlockError&&<div className="profile-error">{unlockError}</div>}<button className="primary modal-submit" onClick={()=>void unlock()}><Lock/>Déverrouiller</button></div></div>}
   </div>;
@@ -77,13 +75,12 @@ function Section({ title, items, onOpen, wide = false }: { title: string; items:
   return <section><div className="section-title"><h2>{title}</h2><button>Tout voir <ChevronRight size={18}/></button></div><div className="rail">{items.map((m, i) => <MediaCard key={m.id} item={m} active={i === 0} wide={wide} onOpen={() => onOpen(m)} />)}</div></section>;
 }
 
-function RemoteSection({ title, fallback, onOpen, kind, recent }: { title:string; fallback:MediaItem[]; onOpen:(item:MediaItem)=>void; kind?:'film'|'serie'; recent?:boolean }) {
+function RemoteSection({ title, onOpen, kind, recent }: { title:string; onOpen:(item:MediaItem)=>void; kind?:'film'|'serie'; recent?:boolean }) {
   const sectionRef=useRef<HTMLElement>(null);const[visible,setVisible]=useState(false);
   const catalog=useCatalog(kind,6,visible,'','',recent?'recent':'');const {items,loading,source,refresh}=catalog;
   useEffect(()=>{const node=sectionRef.current;if(!node)return;const observer=new IntersectionObserver(entries=>{if(entries[0]?.isIntersecting){setVisible(true);observer.disconnect()}},{rootMargin:'320px'});observer.observe(node);return()=>observer.disconnect()},[]);
   useEffect(()=>{if(!visible)return;const interval=setInterval(()=>refresh(),24*60*60*1000);return()=>clearInterval(interval)},[visible,refresh]);
-  const displayed=items.length?items:fallback;
-  return <section ref={sectionRef}><div className="section-title"><h2>{title}</h2><span>{loading?'Chargement…':source?`Source : ${source}`:''}</span></div><div className="rail">{displayed.map((item,index)=><MediaCard key={item.id} item={item} active={index===0} onOpen={()=>onOpen(item)}/>)}</div></section>;
+  return <section ref={sectionRef}><div className="section-title"><h2>{title}</h2><span>{loading?'Chargement…':source?`Source : ${source}`:''}</span></div>{items.length?<div className="rail">{items.map((item,index)=><MediaCard key={item.id} item={item} active={index===0} onOpen={()=>onOpen(item)}/>)}</div>:!loading&&<div className="library-empty compact"><Film/><p>Aucun titre disponible pour le moment.</p></div>}</section>;
 }
 
 function HomePage({profile}:{profile:Profile}) {
@@ -93,17 +90,17 @@ function HomePage({profile}:{profile:Profile}) {
   return <>
     <div className="welcome home-welcome"><h1>Bonsoir, {profile.name}</h1><p>De belles histoires vous attendent.</p></div>
     {resumeItems.length>0&&<Section title="Reprendre la lecture" items={resumeItems.slice(0,6)} onOpen={open} wide />}
-    <RemoteSection title="Dernières sorties" fallback={media.slice(4,10)} onOpen={open} recent />
-    <RemoteSection title="Films à découvrir" fallback={media.filter(m=>m.kind==='film').slice(0,6)} onOpen={open} kind="film" />
-    <RemoteSection title="Séries à découvrir" fallback={media.filter(m=>m.kind==='serie').slice(0,6)} onOpen={open} kind="serie" />
+    <RemoteSection title="Dernières sorties" onOpen={open} recent />
+    <RemoteSection title="Films à découvrir" onOpen={open} kind="film" />
+    <RemoteSection title="Séries à découvrir" onOpen={open} kind="serie" />
     <section><div className="section-title"><h2>Explorer par genre</h2><span>{allGenres.length} genres films et séries</span></div><div className="genres">{allGenres.map((label,i) => {const Icon=i%4===0?Film:i%4===1?Tv:i%4===2?Sparkles:Heart;return <button className={`genre focusable ${i===0?'is-active':''}`} key={label} onClick={()=>navigate(`/search?genre=${encodeURIComponent(label)}`)}><Icon />{label}</button>})}</div></section>
   </>;
 }
 
 function BrowsePage({ kind, title }: { kind?: 'film'|'serie'; title: string }) {
-  const navigate=useNavigate();const sentinel=useRef<HTMLDivElement>(null);const catalog=useCatalog(kind,15,true);const fallback=kind?media.filter(m=>m.kind===kind):media;const list=catalog.items.length?catalog.items:fallback;
+  const navigate=useNavigate();const sentinel=useRef<HTMLDivElement>(null);const catalog=useCatalog(kind,15,true);const list=catalog.items;
   useEffect(()=>{const node=sentinel.current;if(!node)return;const observer=new IntersectionObserver(entries=>{if(entries[0]?.isIntersecting&&!catalog.loading&&catalog.hasMore)void catalog.loadMore()},{rootMargin:'500px'});observer.observe(node);return()=>observer.disconnect()},[catalog.hasMore,catalog.loadMore,catalog.loading]);
-  return <><div className="welcome"><h1>{title}</h1><p>{catalog.items.length?`${catalog.items.length} titres chargés depuis ${catalog.source}.`:`${fallback.length} titres disponibles sur votre SceneRoot.`}</p></div><div className="grid">{list.map((item,index)=><MediaCard item={item} active={index===0} key={item.id} onOpen={()=>navigate(`/title/${item.id}`)}/>)}</div><div className="catalog-sentinel" ref={sentinel}>{catalog.loading&&<><i/>Chargement de la suite…</>}{catalog.error&&<button className="secondary" onClick={()=>catalog.loadMore()}>Réessayer le chargement</button>}{!catalog.hasMore&&catalog.items.length>0&&<span>Fin du catalogue</span>}</div></>;
+  return <><div className="welcome"><h1>{title}</h1><p>{catalog.items.length?`${catalog.items.length} titres chargés depuis ${catalog.source}.`:'Le catalogue est encore vide.'}</p></div><div className="grid">{list.map((item,index)=><MediaCard item={item} active={index===0} key={item.id} onOpen={()=>navigate(`/title/${item.id}`)}/>)}</div>{!catalog.loading&&!catalog.error&&!list.length&&<div className="library-empty"><Film/><h2>Aucun contenu disponible</h2><p>Synchronisez le catalogue IMDb ou ajoutez des médias à votre bibliothèque.</p></div>}<div className="catalog-sentinel" ref={sentinel}>{catalog.loading&&<><i/>Chargement de la suite…</>}{catalog.error&&<button className="secondary" onClick={()=>catalog.loadMore()}>Réessayer le chargement</button>}{!catalog.hasMore&&catalog.items.length>0&&<span>Fin du catalogue</span>}</div></>;
 }
 
 function LibraryPage() {
@@ -124,10 +121,7 @@ function SearchPage() {
   const [duration,setDuration]=useState<DurationBucket>('any');const [minRating,setMinRating]=useState(0);const [quality,setQuality]=useState<''|MediaItem['quality']>('');
   useEffect(()=>{const timer=setTimeout(()=>setDebouncedQuery(query.trim()),320);return()=>clearTimeout(timer)},[query]);
   const catalog=useCatalog(type==='all'?undefined:type,20,true,selectedGenre,debouncedQuery);
-  const normalized=query.toLowerCase();
-  const localResults = media.filter(m => (type==='all'||m.kind===type)&&(!selectedGenre||m.genres.includes(selectedGenre))&&(!query || `${m.title} ${m.genres.join(' ')}`.toLowerCase().includes(normalized) || (normalized.includes('planète')&&m.genres.includes('Science-fiction'))));
-  const baseResults=catalog.items.length?catalog.items:localResults;
-  const results=baseResults.filter(item=>matchesSearchFilters(item,{duration,minRating,quality}));
+  const results=catalog.items.filter(item=>matchesSearchFilters(item,{duration,minRating,quality}));
   useEffect(()=>{const node=sentinel.current;if(!node)return;const observer=new IntersectionObserver(entries=>{if(entries[0]?.isIntersecting&&!catalog.loading&&catalog.hasMore)void catalog.loadMore()},{rootMargin:'420px'});observer.observe(node);return()=>observer.disconnect()},[catalog.hasMore,catalog.loadMore,catalog.loading]);
   const reset=()=>{setQuery('');setSelectedGenre('');setType('all');setDuration('any');setMinRating(0);setQuality('')};
   return <><label className="searchbox"><Search/><input autoFocus value={query} onChange={e=>setQuery(e.target.value)} placeholder="Rechercher un film ou une série…"/><kbd>OK</kbd></label>
@@ -150,10 +144,8 @@ function TonightPage({availableProfiles,profile}:{availableProfiles:Profile[];pr
   const [genre,setGenre]=useState('');
   const [choosing,setChoosing]=useState(false); const [chosen,setChosen]=useState<string|null>(null);
   const [scored,setScored]=useState<ScoredMedia[]>([]); const [computing,setComputing]=useState(false);
-  const demoMode=!library.loading&&library.items.length===0;
   const pool=useMemo(()=>{
-    const base=library.items.length?library.items:media;
-    return base.filter(m=>(kind==='any'||m.kind===kind)&&(!genre||m.genres.includes(genre))&&matchesDuration(m,duration)&&!hidden.has(m.id));
+    return library.items.filter(m=>(kind==='any'||m.kind===kind)&&(!genre||m.genres.includes(genre))&&matchesDuration(m,duration)&&!hidden.has(m.id));
   },[library.items,kind,genre,duration,hidden]);
   useEffect(()=>{
     let active=true;
@@ -176,7 +168,6 @@ function TonightPage({availableProfiles,profile}:{availableProfiles:Profile[];pr
   },[pool,selected,mood]);
   const pick=()=>{setChoosing(true);setChosen(null);setTimeout(()=>{setChosen(scored[Math.floor(Math.random()*Math.min(3,scored.length))]?.item.id??null);setChoosing(false)},1100)};
   return <><div className="tonight-head"><div className="welcome"><h1>Que regarde-t-on ce soir ?</h1><p>SceneRoot cherche le meilleur compromis, pas la moyenne la plus facile.</p></div><button className="primary magic" onClick={pick} disabled={!scored.length}><WandSparkles/>{choosing?'Choix en cours…':'Faites le choix pour nous'}</button></div>
-    {demoMode&&<div className="player-note" style={{margin:'0 0 12px'}}>Mode démonstration : aucune bibliothèque locale indexée, propositions issues d’un catalogue fictif.</div>}
     <div className="chooser"><FilterGroup title="Profils">{availableProfiles.map(p=><button className={selected.includes(p.id)?'on':''} onClick={()=>setSelected(s=>s.includes(p.id)?s.filter(x=>x!==p.id):[...s,p.id])} key={p.id}>{p.name}{selected.includes(p.id)&&<Check/>}</button>)}</FilterGroup><FilterGroup title="Envie">{(['film','serie','any'] as const).map(v=><button className={kind===v?'on':''} onClick={()=>setKind(v)} key={v}>{v==='film'?'Film':v==='serie'?'Série':'Peu importe'}</button>)}</FilterGroup><FilterGroup title="Durée">{([['short','< 1h30'],['medium','1h30–2h'],['any','Peu importe']] as const).map(([v,l])=><button className={duration===v?'on':''} onClick={()=>setDuration(v)} key={v}>{l}</button>)}</FilterGroup><FilterGroup title="Ambiance">{(['Détente','Action','Émotion','Frissons','Découverte'] as Mood[]).map(v=><button className={mood===v?'on':''} onClick={()=>setMood(v)} key={v}>{v}</button>)}</FilterGroup><label className="tonight-genre"><strong>Genre</strong><select value={genre} onChange={event=>setGenre(event.target.value)}><option value="">Tous les genres</option>{allGenres.map(value=><option value={value} key={value}>{value}</option>)}</select></label></div>
     <div className="match-list">{scored.map((x,i)=><button className={`match-card ${chosen===x.item.id?'winner':''}`} key={x.item.id} onClick={()=>navigate(`/title/${x.item.id}`)}><div className="match-rank">{i+1}</div><div className="match-art" style={{'--a':x.item.palette[0],'--b':x.item.palette[1]} as React.CSSProperties}>{x.item.symbol}</div><div className="match-copy"><h3>{x.item.title}</h3><strong>{x.score} % compatible</strong><p>✓ {selectedProfileNames(selected,availableProfiles)} · ✓ satisfaction minimale {x.minAffinity}% · {x.seenCount>0?`⚠ déjà vu par ${x.seenCount} profil${x.seenCount>1?'s':''}`:'✓ jamais vu par le groupe'} · {x.item.duration}</p></div><ChevronRight/></button>)}{!scored.length&&!computing&&<div className="empty-recommendations"><Sparkles/><h3>Aucun titre avec ces contraintes</h3><p>Essayez « Peu importe » pour la durée ou choisissez un autre genre.</p></div>}{computing&&!scored.length&&<div className="library-loading"><i/>Calcul du meilleur compromis…</div>}</div>
   </>;
@@ -334,12 +325,13 @@ type AppSettings={minFreeGb:number;preferredQuality:string;preferredLanguages:st
 type CatalogStatus={available:boolean;total:number;syncing:boolean;sources:Array<{source:string;status:string;phase:string;processed:number;completedAt?:string;error?:string}>;tmdb:{configured:boolean;source:string}};
 function SettingsPage() {
   const navigateSettings=useNavigate();
-  const [scan, setScan] = useState(false); const [scanMessage,setScanMessage]=useState('Surveillance active'); const [cec,setCec]=useState(true); const [updates,setUpdates]=useState(true);
+  const [scan, setScan] = useState(false); const [scanMessage,setScanMessage]=useState('Surveillance active'); const [updates,setUpdates]=useState(true);
+  const [cecStatus,setCecStatus]=useState<{available:boolean;bridgeActive:boolean;adapter:string|null}|null>(null);
   const [storage,setStorage]=useState<StorageRoot[]>([]);
   const [cache,setCache]=useState<{entries:number;bytes:number}|null>(null);
   const [purging,setPurging]=useState(false);
   const loadCache=()=>fetch('/api/cache').then(response=>response.ok?response.json():null).then((data:{entries:number;bytes:number}|null)=>setCache(data)).catch(()=>{});
-  useEffect(()=>{fetch('/api/storage').then(response=>response.ok?response.json():[]).then((rows:StorageRoot[])=>setStorage(rows)).catch(()=>{});void loadCache()},[]);
+  useEffect(()=>{fetch('/api/storage').then(response=>response.ok?response.json():[]).then((rows:StorageRoot[])=>setStorage(rows)).catch(()=>{});fetch('/api/cec/status').then(response=>response.ok?response.json():null).then((data:{available:boolean;bridgeActive:boolean;adapter:string|null}|null)=>setCecStatus(data)).catch(()=>{});void loadCache()},[]);
   const purgeCache=async()=>{setPurging(true);try{await fetch('/api/cache',{method:'DELETE'});await loadCache()}finally{setPurging(false)}};
   const [settings,setSettings]=useState<AppSettings|null>(null);
   const [catalogStatus,setCatalogStatus]=useState<CatalogStatus|null>(null);const [tmdbKey,setTmdbKey]=useState('');const [catalogMessage,setCatalogMessage]=useState('');const [savingCatalog,setSavingCatalog]=useState(false);
@@ -366,7 +358,7 @@ function SettingsPage() {
   const runScan=async()=>{setScan(true);setScanMessage('Analyse des emplacements…');try{const response=await fetch('/api/library/scan',{method:'POST'});const result=await response.json() as {items?:unknown[]};setScanMessage(`${result.items?.length??0} média(s) indexé(s)`)}catch{setScanMessage('Serveur indisponible — nouvel essai au prochain scan')}finally{setScan(false)}};
   return <><div className="welcome"><h1>Paramètres</h1><p>Configurez votre médiathèque, la lecture et l’appareil.</p></div><div className="settings-grid">
     <div className="settings-card"><h2><FolderOpen/>Médiathèque</h2><p>Dossiers analysés · <span className="online">{scanMessage}</span></p><div className="path"><HardDrive/> /mnt/media <Check/></div><button className="primary" onClick={runScan} disabled={scan}><RefreshCw className={scan?'spin':''}/>{scan?'Analyse en cours…':'Analyser maintenant'}</button></div>
-    <div className="settings-card"><h2><Monitor/>Téléviseur & CEC</h2><Setting label="Contrôle HDMI-CEC" value={cec} setValue={setCec}/><Setting label="Démarrer en plein écran" value={true}/><Setting label="Adapter le taux de rafraîchissement" value={true}/></div>
+    <div className="settings-card"><h2><Monitor/>Téléviseur & CEC</h2><Setting label="Pont de télécommande HDMI-CEC" value={Boolean(cecStatus?.bridgeActive&&cecStatus.available)}/><div className="path"><Monitor/> {cecStatus?.bridgeActive&&cecStatus.available?'Pont actif · adaptateur détecté':cecStatus?.available?'Adaptateur détecté · pont inactif':cecStatus?.bridgeActive?'Pont actif · aucun adaptateur détecté':'Aucun adaptateur CEC détecté'}</div>{cecStatus?.adapter&&<small>Périphérique : {cecStatus.adapter}</small>}<Setting label="Démarrer en plein écran" value={true}/><Setting label="Adapter le taux de rafraîchissement" value={true}/></div>
     <div className="settings-card"><h2><Download/>Téléchargements</h2><p>Client local</p><div className="path"><Wifi/> Transmission RPC <Check/></div><label className="reserve-field">Réserve d’espace disque : <b>{settings?.minFreeGb??50} Go</b><input type="range" min={5} max={500} step={5} value={settings?.minFreeGb??50} onChange={event=>saveReserve(Number(event.target.value))}/></label><small>SceneRoot refuse un téléchargement qui passerait sous cette réserve. Les torrents doivent provenir de contenus que vous êtes autorisé à télécharger.</small></div>
     <div className="settings-card storage"><h2><BarChart3/>Stockage</h2>{storage.length?<><div className="storage-number"><b>{formatBytes(used)}</b> / {formatBytes(totals.total)} utilisés</div><div className="storage-bar"><i style={{width:`${totals.total?Math.min(100,totals.library/totals.total*100):0}%`}}/><i style={{width:`${totals.total?Math.min(100,Math.max(0,used-totals.library)/totals.total*100):0}%`}}/></div><div className="storage-key"><span>Médiathèque indexée {formatBytes(totals.library)}</span><span>Espace libre {formatBytes(totals.free)}</span></div><p>{storage.length} emplacement{storage.length>1?'s':''} de stockage surveillé{storage.length>1?'s':''}.</p></>:<p>Aucun emplacement de stockage détecté. Configurez <code>SCENEROOT_MEDIA</code> puis relancez une analyse.</p>}</div>
     <div className="settings-card"><h2><ShieldCheck/>Système</h2><Setting label="Mises à jour automatiques" value={updates} setValue={setUpdates}/>{cache&&<div className="path"><HardDrive/> Cache HTTP : {formatBytes(cache.bytes)} · {cache.entries} fichier{cache.entries>1?'s':''}</div>}<button className="secondary" onClick={()=>void purgeCache()} disabled={purging||!cache?.entries}><Trash2 className={purging?'spin':''}/>{purging?'Purge en cours…':'Purger le cache HTTP'}</button><button className="path path-button" onClick={()=>navigateSettings('/about')}><ShieldCheck/> À propos & attributions</button><div className="version">SceneRoot v0.1.0 <span>À jour</span></div></div>
@@ -416,17 +408,18 @@ function AboutPage(){
 function App() {
   const [booting,setBooting]=useState(true);
   const [savedProfiles,setSavedProfiles]=useState<Profile[]>([]);
+  const [profilesLoaded,setProfilesLoaded]=useState(false);
   const [setupComplete,setSetupComplete]=useState<boolean|null>(null);
-  const [profile,setProfile]=useState<Profile|null>(()=>{try{return JSON.parse(localStorage.getItem('sceneroot-profile')||'null')}catch{return null}});
-  const refetchProfiles=useCallback(()=>fetch('/api/profiles').then(response=>response.ok?response.json():[]).then((items:Profile[])=>setSavedProfiles(items)).catch(()=>{}),[]);
+  const [profile,setProfile]=useState<Profile|null>(()=>{try{const stored=JSON.parse(localStorage.getItem('sceneroot-profile')||'null') as Profile|null;if(stored&&['nicolas','cathy','nathan','lucie'].includes(stored.id)){localStorage.removeItem('sceneroot-profile');return null}return stored}catch{return null}});
+  const refetchProfiles=useCallback(()=>fetch('/api/profiles').then(response=>response.ok?response.json():[]).then((items:Profile[])=>setSavedProfiles(items)).catch(()=>setSavedProfiles([])).finally(()=>setProfilesLoaded(true)),[]);
   useEffect(()=>{const timer=setTimeout(()=>setBooting(false),1450);return()=>clearTimeout(timer)},[]);
   useEffect(()=>{void refetchProfiles()},[refetchProfiles]);
   useEffect(()=>{fetch('/api/settings').then(response=>response.ok?response.json():null).then((data:{setupComplete?:boolean}|null)=>setSetupComplete(Boolean(data?.setupComplete))).catch(()=>setSetupComplete(false))},[]);
   useEffect(()=>{ const handle=(e:KeyboardEvent)=>{ if(!['ArrowRight','ArrowLeft','ArrowUp','ArrowDown'].includes(e.key))return; const els=[...document.querySelectorAll<HTMLElement>('button:not([disabled]),a[href],input,select')].filter(x=>x.offsetParent!==null); const current=document.activeElement as HTMLElement; const r=current?.getBoundingClientRect(); if(!r){els[0]?.focus();return} const horizontal=e.key==='ArrowLeft'||e.key==='ArrowRight'; const sign=e.key==='ArrowLeft'||e.key==='ArrowUp'?-1:1; let best:HTMLElement|undefined,score=Infinity; for(const el of els){if(el===current)continue;const q=el.getBoundingClientRect();const dx=q.left+q.width/2-(r.left+r.width/2),dy=q.top+q.height/2-(r.top+r.height/2);const primary=horizontal?dx:dy;if(Math.sign(primary)!==sign)continue;const secondary=horizontal?dy:dx;const s=Math.abs(primary)+Math.abs(secondary)*2;if(s<score){score=s;best=el}} if(best){e.preventDefault();best.focus()}}; addEventListener('keydown',handle); return()=>removeEventListener('keydown',handle)},[]);
-  if(booting||setupComplete===null)return <BootScreen/>;
-  const needsSetup=!setupComplete&&savedProfiles.length===0;
+  if(booting||setupComplete===null||!profilesLoaded)return <BootScreen/>;
+  const needsSetup=savedProfiles.length===0;
   if(needsSetup&&!profile)return <SetupWizard onDone={created=>{setSetupComplete(true);if(created.length)setSavedProfiles(current=>[...current,...created.filter(item=>!current.some(existing=>existing.id===item.id))]);void refetchProfiles()}}/>;
-  const availableProfiles=setupComplete?savedProfiles:[...profiles.map(base=>savedProfiles.find(saved=>saved.id===base.id)??base),...savedProfiles.filter(saved=>!profiles.some(base=>base.id===saved.id))];
+  const availableProfiles=savedProfiles;
   const upsertProfile=(saved:Profile)=>setSavedProfiles(current=>current.some(item=>item.id===saved.id)?current.map(item=>item.id===saved.id?saved:item):[...current,saved]);
   const removeProfile=(deleted:Profile)=>{setSavedProfiles(current=>current.filter(item=>item.id!==deleted.id));if(profile?.id===deleted.id){localStorage.removeItem('sceneroot-profile');setProfile(null)}};
   if(!profile)return <ProfileGate availableProfiles={availableProfiles} onSaved={upsertProfile} onDeleted={removeProfile} onSelect={p=>{localStorage.setItem('sceneroot-profile',JSON.stringify(p));setProfile(p)}}/>;

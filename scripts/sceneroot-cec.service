@@ -1,0 +1,13 @@
+[Unit]
+Description=SceneRoot HDMI-CEC remote input bridge
+After=local-fs.target
+Before=sceneroot-kiosk.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/sceneroot/scripts/cec-input.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

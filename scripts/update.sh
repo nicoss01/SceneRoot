@@ -2,14 +2,20 @@
 set -Eeuo pipefail
 
 # SceneRoot — mise à jour sûre depuis GitHub.
-# Usage : sudo /opt/sceneroot/scripts/update.sh
+# Usage : sudo /opt/sceneroot/scripts/update.sh [--reconfigure]
 
-APP_DIR="${SCENEROOT_INSTALL_DIR:-/opt/sceneroot}"
 ENV_FILE="${SCENEROOT_ENV_FILE:-/etc/sceneroot.env}"
-DATA_DIR="${SCENEROOT_DATA:-/var/lib/sceneroot}"
+APP_DIR="${SCENEROOT_INSTALL_DIR:-/opt/sceneroot}"
+config_value() { [[ -r "$ENV_FILE" ]] && sed -n "s/^$1=//p" "$ENV_FILE" | tail -n 1 || true; }
+DATA_DIR="${SCENEROOT_DATA:-$(config_value SCENEROOT_DATA)}"
+DATA_DIR="${DATA_DIR:-/var/lib/sceneroot}"
 BACKUP_DIR="${SCENEROOT_BACKUP_DIR:-/var/backups/sceneroot}"
 UPDATE_REF="${SCENEROOT_UPDATE_REF:-origin/main}"
 SERVICE="${SCENEROOT_SERVICE:-sceneroot.service}"
+KIOSK_MODE="${SCENEROOT_KIOSK_MODE:-$(config_value SCENEROOT_KIOSK_MODE)}"
+KIOSK_MODE="${KIOSK_MODE:-direct}"
+RECONFIGURE=0
+[[ "${1:-}" == "--reconfigure" ]] && RECONFIGURE=1
 
 if [[ "${EUID}" -ne 0 ]]; then
   echo "Cette mise à jour doit être lancée avec sudo :" >&2
@@ -40,11 +46,15 @@ fi
 as_app git fetch origin --prune
 CURRENT="$(as_app git rev-parse HEAD)"
 LATEST="$(as_app git rev-parse "$UPDATE_REF")"
-if [[ "$CURRENT" == "$LATEST" ]]; then
+if [[ "$CURRENT" == "$LATEST" && "$RECONFIGURE" == 0 ]]; then
   ok "SceneRoot est déjà à jour ($CURRENT)."
   exit 0
 fi
-ok "Nouvelle version détectée : ${CURRENT:0:8} → ${LATEST:0:8}"
+if [[ "$CURRENT" == "$LATEST" ]]; then
+  ok "Code à jour ; réapplication de la configuration système demandée."
+else
+  ok "Nouvelle version détectée : ${CURRENT:0:8} → ${LATEST:0:8}"
+fi
 
 log "Sauvegarde des réglages"
 mkdir -p "$BACKUP_DIR"
@@ -95,13 +105,27 @@ log "Installation de la nouvelle version"
 as_app git merge --ff-only "$UPDATE_REF"
 as_app npm ci --no-audit --no-fund
 as_app npm run build
+chmod +x scripts/update.sh scripts/kiosk.sh scripts/cec-input.py
 
 # Les unités sont réinstallées pour appliquer aussi les évolutions du service
 # et du minuteur sans devoir relancer l’installateur complet.
 sed "s/@SCENEROOT_USER@/$APP_USER/g" scripts/sceneroot.service > /etc/systemd/system/sceneroot.service
 sed "s/@SCENEROOT_USER@/$APP_USER/g" scripts/sceneroot-update.service > /etc/systemd/system/sceneroot-update.service
+sed "s/@SCENEROOT_USER@/$APP_USER/g" scripts/sceneroot-kiosk.service > /etc/systemd/system/sceneroot-kiosk.service
+install -m 0644 scripts/sceneroot-cec.service /etc/systemd/system/sceneroot-cec.service
 install -m 0644 scripts/sceneroot-update.timer /etc/systemd/system/sceneroot-update.timer
+echo uinput > /etc/modules-load.d/sceneroot-uinput.conf
+modprobe uinput || true
+for group in video render input seat; do getent group "$group" >/dev/null && usermod -aG "$group" "$APP_USER"; done
 systemctl daemon-reload
+systemctl enable --now sceneroot-cec.service
+if [[ "$KIOSK_MODE" == "direct" ]]; then
+  systemctl disable display-manager.service >/dev/null 2>&1 || true
+  systemctl set-default multi-user.target >/dev/null
+  systemctl enable sceneroot-kiosk.service
+else
+  systemctl disable sceneroot-kiosk.service >/dev/null 2>&1 || true
+fi
 
 log "Redémarrage de SceneRoot"
 systemctl restart "$SERVICE"

@@ -6,5 +6,6 @@ After=network-online.target
 Type=oneshot
 WorkingDirectory=/opt/sceneroot
 Environment=SCENEROOT_USER=@SCENEROOT_USER@
+EnvironmentFile=-/etc/sceneroot.env
 ExecStart=/opt/sceneroot/scripts/update.sh
 TimeoutStartSec=30min
