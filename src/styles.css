@@ -311,6 +311,11 @@ section { margin: 0 0 13px; }
 .episode-title { flex: 1; }
 .episode-title em { color: var(--cyan); font-style: normal; font-size: 12px; }
 .episode-progress { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--cyan); }
+.versions { margin-top: 22px; max-width: 640px; }
+.versions h3 { color: #cfe0f2; font-size: 14px; margin-bottom: 10px; }
+.version-list { display: flex; flex-wrap: wrap; gap: 10px; }
+.version { display: flex; align-items: center; gap: 8px; padding: 11px 15px; background: rgba(5,17,30,.72); border: 1px solid #23405c; border-radius: 10px; }
+.version.is-selected { border-color: var(--cyan); box-shadow: 0 0 14px rgba(14,165,233,.28); }
 .download-panel { position: relative; width: min(760px, 94vw); max-height: 88vh; overflow: auto; padding: 26px; background: rgba(3,15,27,.97); border: 1px solid #0ea5e9; border-radius: 16px; box-shadow: 0 24px 70px #000c; }
 .download-panel h2 { display: flex; align-items: center; gap: 10px; }
 .download-legal { color: #9fb6cf; font-size: 12px; margin: 6px 0 16px; }

@@ -19,16 +19,18 @@ export function useLibraryGroup(id: string | undefined, profileId: string, enabl
         if (!active) return;
         setDetail(data); setLoading(false);
         if (data) {
-          const episodes: MediaItem[] = data.versions.filter(version => version.episode).map(version => ({
+          // Remember every version (episodes and alternate film versions) as a playable local media item,
+          // so the player can resolve any version id the detail screen offers.
+          const playable: MediaItem[] = data.versions.map(version => ({
             id: version.id,
-            title: `${data.title} · S${version.season ?? 1}E${String(version.episode).padStart(2, '0')}`,
-            kind: 'serie', year: data.year ?? new Date().getFullYear(),
+            title: version.episode ? `${data.title} · S${version.season ?? 1}E${String(version.episode).padStart(2, '0')}` : data.title,
+            kind: data.kind, year: data.year ?? new Date().getFullYear(),
             genres: data.metadata?.genres?.length ? data.metadata.genres : ['Non classé'],
-            duration: 'Épisode', rating: 0, quality: '1080p',
-            description: data.metadata?.overview ?? '', palette: ['#0e7490', '#172554'], symbol: '▥',
+            duration: version.episode ? 'Épisode' : 'Film', rating: 0, quality: '1080p',
+            description: data.metadata?.overview ?? '', palette: ['#0e7490', '#172554'], symbol: data.kind === 'serie' ? '▥' : '◉',
             art: data.metadata?.backdrop ?? data.metadata?.poster, source: 'local', local: true,
           }));
-          if (episodes.length) rememberCatalogItems(episodes);
+          if (playable.length) rememberCatalogItems(playable);
         }
       })
       .catch(() => { if (active) { setDetail(null); setLoading(false); } });

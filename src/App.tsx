@@ -167,12 +167,16 @@ function matchesDuration(item:MediaItem,duration:'short'|'medium'|'any'){if(dura
 function selectedProfileNames(ids:string[],availableProfiles:Profile[]){const names=ids.map(id=>availableProfiles.find(profile=>profile.id===id)?.name).filter(Boolean);return names.length?`${names.join(', ')} sont pris en compte`:'sélection familiale neutre'}
 function FilterGroup({title,children}:{title:string;children:React.ReactNode}){return <div className="filter-group"><strong>{title}</strong><div>{children}</div></div>}
 
+function versionLabel(version:{size:number;technical?:Record<string,unknown>}){const height=Number(version.technical?.height??0);const quality=height>=2000?'4K':height>=900?'1080p':height>=600?'720p':'SD';const codec=version.technical?.videoCodec?String(version.technical.videoCodec).toUpperCase():'';const hdr=version.technical?.hdr?' · HDR':'';return `${quality}${codec?` · ${codec}`:''}${hdr} · ${formatBytes(version.size)}`}
 function DetailPage({profile}:{profile:Profile}) {
   const { id } = useParams(); const navigate = useNavigate(); const item = resolveMedia(id);
-  const isLocalSeries=Boolean(item.local)&&item.kind==='serie';
-  const [downloading,setDownloading]=useState(false);
-  const {seasons,detail}=useLibraryGroup(id,profile.id,isLocalSeries);
-  const nextId=detail?.nextEpisodeId; const playTarget=nextId??item.id;
+  const isLocal=Boolean(item.local);const isLocalSeries=isLocal&&item.kind==='serie';
+  const [downloading,setDownloading]=useState(false);const [chosenVersion,setChosenVersion]=useState<string|undefined>();
+  const {seasons,detail}=useLibraryGroup(id,profile.id,isLocal);
+  const nextId=detail?.nextEpisodeId;
+  const filmVersions=(detail&&item.kind==='film')?detail.versions:[];
+  const activeVersion=chosenVersion??item.id;
+  const playTarget=item.kind==='serie'?(nextId??item.id):activeVersion;
   const nextEpisode=seasons.flatMap(season=>season.episodes.map(episode=>({...episode,season:season.season}))).find(episode=>episode.id===nextId);
   const nextStarted=nextEpisode?(nextEpisode.progress>0.02&&nextEpisode.progress<0.9):Boolean(item.progress);
   const playLabel=isLocalSeries?(nextEpisode?`${nextStarted?'Reprendre':'Lire'} S${nextEpisode.season}E${String(nextEpisode.episode).padStart(2,'0')}`:'Lire'):(item.progress?'Reprendre':'Lire');
@@ -181,6 +185,7 @@ function DetailPage({profile}:{profile:Profile}) {
     <div className="detail__symbol">{item.symbol}<i/></div><div className="detail__content"><span className="eyebrow">{item.kind === 'film' ? 'FILM' : 'SÉRIE'} · {item.year}</span><h1>{item.title}</h1>
     <div className="detail__meta"><Star fill="currentColor"/> {item.rating>0?`${item.rating}/10`:'Non noté'} <span>{item.duration}</span><span>{item.quality}</span></div><p>{item.description}</p><div className="detail__genres">{item.genres.map(g=><span key={g}>{g}</span>)}</div>{item.sourceUrl&&<a className="source-link" href={item.sourceUrl} target="_blank" rel="noreferrer">Informations : {item.informationSource??(item.source==='tvmaze'?'TVmaze':item.source==='wikipedia'?'Wikipédia':'TMDB')}</a>}
     <div className="actions"><button className="primary focusable" onClick={()=>navigate(`/player/${playTarget}`)}><Play fill="currentColor"/> {playLabel}</button><button className="secondary focusable" onClick={()=>setDownloading(true)}><Download/> Télécharger</button><button className="icon-btn focusable"><Heart/></button></div>
+    {item.kind==='film'&&filmVersions.length>1&&<div className="versions"><h3>{filmVersions.length} versions disponibles</h3><div className="version-list">{filmVersions.map(version=><button className={`version focusable ${activeVersion===version.id?'is-selected':''}`} key={version.id} onClick={()=>setChosenVersion(version.id)}>{versionLabel(version)}{activeVersion===version.id&&<Check/>}</button>)}</div></div>}
     {downloading&&<DownloadPanel item={item} onClose={()=>setDownloading(false)}/>}
     {isLocalSeries&&seasons.length>0&&<div className="episodes">{seasons.map(season=><div className="season" key={season.season}><h3>Saison {season.season} · {season.episodes.length} épisode{season.episodes.length>1?'s':''}</h3><div className="episode-list">{season.episodes.map(episode=><button className={`episode focusable ${episode.id===nextId?'is-next':''}`} key={episode.id} onClick={()=>navigate(`/player/${episode.id}`)}><span className="episode-num">E{String(episode.episode).padStart(2,'0')}</span><span className="episode-title">{episode.title}{episode.id===nextId&&<em> · à suivre</em>}</span><Play size={16} fill="currentColor"/>{episode.progress>0.02&&<i className="episode-progress" style={{width:`${Math.min(100,Math.round(episode.progress*100))}%`}}/>}</button>)}</div></div>)}</div>}</div>
   </div>;
