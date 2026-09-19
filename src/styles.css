@@ -304,6 +304,12 @@ section { margin: 0 0 13px; }
 .player__top, .player__controls, .track-panel { transition: opacity .35s ease; }
 .player.chrome-hidden { cursor: none; }
 .player.chrome-hidden .player__top, .player.chrome-hidden .player__controls, .player.chrome-hidden .track-panel { opacity: 0; pointer-events: none; }
+.player.chrome-hidden .next-episode-card { opacity: 0; pointer-events: none; }
+.next-episode-card { position: absolute; right: 40px; bottom: 140px; z-index: 3; display: flex; flex-direction: column; gap: 5px; align-items: flex-start; padding: 15px 18px; text-align: left; background: rgba(3,15,27,.94); border: 1px solid var(--cyan); border-radius: 13px; box-shadow: 0 15px 45px #000b; transition: opacity .35s ease; max-width: 300px; }
+.next-episode-label { font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: #8fa6c0; }
+.next-episode-card strong { font-size: 15px; }
+.next-episode-cta { display: flex; align-items: center; gap: 7px; color: var(--cyan); font-size: 13px; margin-top: 3px; }
+@media (max-width: 640px) { .next-episode-card { right: 15px; bottom: 120px; max-width: 220px; } }
 .stream-buffering { display: flex; align-items: center; justify-content: center; }
 .buffering-card { text-align: center; max-width: 460px; display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 32px; background: rgba(3,15,27,.7); border: 1px solid #23405c; border-radius: 16px; }
 .buffering-card h1 { margin: 0; font-size: 26px; }
