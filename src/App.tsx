@@ -315,6 +315,7 @@ type StorageRoot={root:string;total:number;free:number;available:number;libraryB
 type MaskedSource={id:string;name:string;url:string;categories?:string;hasKey:boolean};
 type AppSettings={minFreeGb:number;preferredQuality:string;preferredLanguages:string[];preferHdr:boolean;envSources:{id:string;name:string}[];sources:MaskedSource[]};
 function SettingsPage() {
+  const navigateSettings=useNavigate();
   const [scan, setScan] = useState(false); const [scanMessage,setScanMessage]=useState('Surveillance active'); const [cec,setCec]=useState(true); const [updates,setUpdates]=useState(true);
   const [storage,setStorage]=useState<StorageRoot[]>([]);
   const [cache,setCache]=useState<{entries:number;bytes:number}|null>(null);
@@ -340,7 +341,7 @@ function SettingsPage() {
     <div className="settings-card"><h2><Monitor/>Téléviseur & CEC</h2><Setting label="Contrôle HDMI-CEC" value={cec} setValue={setCec}/><Setting label="Démarrer en plein écran" value={true}/><Setting label="Adapter le taux de rafraîchissement" value={true}/></div>
     <div className="settings-card"><h2><Download/>Téléchargements</h2><p>Client local</p><div className="path"><Wifi/> Transmission RPC <Check/></div><label className="reserve-field">Réserve d’espace disque : <b>{settings?.minFreeGb??50} Go</b><input type="range" min={5} max={500} step={5} value={settings?.minFreeGb??50} onChange={event=>saveReserve(Number(event.target.value))}/></label><small>SceneRoot refuse un téléchargement qui passerait sous cette réserve. Les torrents doivent provenir de contenus que vous êtes autorisé à télécharger.</small></div>
     <div className="settings-card storage"><h2><BarChart3/>Stockage</h2>{storage.length?<><div className="storage-number"><b>{formatBytes(used)}</b> / {formatBytes(totals.total)} utilisés</div><div className="storage-bar"><i style={{width:`${totals.total?Math.min(100,totals.library/totals.total*100):0}%`}}/><i style={{width:`${totals.total?Math.min(100,Math.max(0,used-totals.library)/totals.total*100):0}%`}}/></div><div className="storage-key"><span>Médiathèque indexée {formatBytes(totals.library)}</span><span>Espace libre {formatBytes(totals.free)}</span></div><p>{storage.length} emplacement{storage.length>1?'s':''} de stockage surveillé{storage.length>1?'s':''}.</p></>:<p>Aucun emplacement de stockage détecté. Configurez <code>SCENEROOT_MEDIA</code> puis relancez une analyse.</p>}</div>
-    <div className="settings-card"><h2><ShieldCheck/>Système</h2><Setting label="Mises à jour automatiques" value={updates} setValue={setUpdates}/><Setting label="Catalogue et cache local" value={true}/><p>TMDB si configuré · sinon Wikipédia + TVmaze</p>{cache&&<div className="path"><HardDrive/> Cache métadonnées : {formatBytes(cache.bytes)} · {cache.entries} fichier{cache.entries>1?'s':''}</div>}<button className="secondary" onClick={()=>void purgeCache()} disabled={purging||!cache?.entries}><Trash2 className={purging?'spin':''}/>{purging?'Purge en cours…':'Purger le cache'}</button><small>Ce produit utilise l’API TMDB mais n’est ni approuvé ni certifié par TMDB.</small><div className="version">SceneRoot v0.1.0 <span>À jour</span></div></div>
+    <div className="settings-card"><h2><ShieldCheck/>Système</h2><Setting label="Mises à jour automatiques" value={updates} setValue={setUpdates}/><Setting label="Catalogue et cache local" value={true}/><p>TMDB si configuré · sinon Wikipédia + TVmaze</p>{cache&&<div className="path"><HardDrive/> Cache métadonnées : {formatBytes(cache.bytes)} · {cache.entries} fichier{cache.entries>1?'s':''}</div>}<button className="secondary" onClick={()=>void purgeCache()} disabled={purging||!cache?.entries}><Trash2 className={purging?'spin':''}/>{purging?'Purge en cours…':'Purger le cache'}</button><small>Ce produit utilise l’API TMDB mais n’est ni approuvé ni certifié par TMDB.</small><button className="path path-button" onClick={()=>navigateSettings('/about')}><ShieldCheck/> À propos & attributions</button><div className="version">SceneRoot v0.1.0 <span>À jour</span></div></div>
     <div className="settings-card mobile-access"><h2><Monitor/>Réglages depuis un mobile</h2><p>Scannez ce QR code avec votre téléphone pour ouvrir le panneau de réglages.</p><div className="qr-wrap"><QRCode value={adminUrl}/></div><a className="path" href={adminUrl} target="_blank" rel="noreferrer"><Wifi/> {adminUrl}</a><small>Depuis un mobile, les modifications requièrent le jeton d’administration (SCENEROOT_ADMIN_TOKEN).</small></div>
     <div className="settings-card sources"><h2><Wifi/>Sources de recherche</h2>
       {settings?.envSources.map(source=><div className="source-row" key={source.id}><span><b>{source.name}</b><small>Configurée par l’environnement</small></span><i className="dot"/></div>)}
@@ -353,6 +354,30 @@ function SettingsPage() {
   </div></>;
 }
 function Setting({label,value,setValue}:{label:string;value:boolean;setValue?:(v:boolean)=>void}) { return <button className="setting" onClick={()=>setValue?.(!value)}><span>{label}</span><i className={value?'on':''}><b/></i></button> }
+
+type Attribution={name:string;role:string;license:string;url:string};
+const dataSources:Attribution[]=[
+  {name:'The Movie Database (TMDB)',role:'Catalogue, affiches et résumés de films et séries',license:'API TMDB',url:'https://www.themoviedb.org/'},
+  {name:'TVmaze',role:'Données techniques et images de séries',license:'API TVmaze (CC BY-SA 4.0)',url:'https://www.tvmaze.com/api'},
+  {name:'Wikipédia / MediaWiki',role:'Résumés français des films et séries',license:'Contenu sous CC BY-SA',url:'https://www.mediawiki.org/wiki/API:Main_page'},
+];
+const software:Attribution[]=[
+  {name:'mpv',role:'Lecture vidéo native (HEVC, HDR, multi-pistes)',license:'GPLv2+ / LGPL',url:'https://mpv.io/'},
+  {name:'FFmpeg / ffprobe',role:'Analyse des fichiers média',license:'LGPL / GPL',url:'https://ffmpeg.org/'},
+  {name:'Transmission',role:'Téléchargements',license:'GPLv2 / MIT',url:'https://transmissionbt.com/'},
+  {name:'Chromium',role:'Interface en mode kiosque',license:'BSD',url:'https://www.chromium.org/'},
+  {name:'React · Vite · lucide-react',role:'Interface et icônes',license:'MIT / ISC',url:'https://react.dev/'},
+];
+function AboutPage(){
+  const navigate=useNavigate();
+  return <div className="about"><button className="back focusable" onClick={()=>navigate(-1)}><ArrowLeft/> Retour</button>
+    <div className="welcome"><h1>À propos & attributions</h1><p>SceneRoot s’appuie sur des services et des logiciels tiers. Merci à leurs auteurs.</p></div>
+    <div className="about-card tmdb-notice"><Film/><p><strong>Ce produit utilise l’API TMDB mais n’est ni approuvé ni certifié par TMDB.</strong><br/>This product uses the TMDB API but is not endorsed or certified by TMDB.</p></div>
+    <div className="about-section"><h2>Sources de données</h2>{dataSources.map(item=><a className="about-item" href={item.url} target="_blank" rel="noreferrer" key={item.name}><div><strong>{item.name}</strong><small>{item.role}</small></div><span>{item.license}</span></a>)}</div>
+    <div className="about-section"><h2>Lecture, système et interface</h2>{software.map(item=><a className="about-item" href={item.url} target="_blank" rel="noreferrer" key={item.name}><div><strong>{item.name}</strong><small>{item.role}</small></div><span>{item.license}</span></a>)}</div>
+    <div className="about-section"><h2>SceneRoot</h2><p className="about-note">Media center familial pour Raspberry Pi. Utilisez uniquement des sources et des contenus que vous êtes autorisé à récupérer et à lire. SceneRoot v0.1.0.</p></div>
+  </div>;
+}
 
 function App() {
   const [booting,setBooting]=useState(true);
@@ -373,7 +398,7 @@ function App() {
   if(!profile)return <ProfileGate availableProfiles={availableProfiles} onSaved={upsertProfile} onDeleted={removeProfile} onSelect={p=>{localStorage.setItem('sceneroot-profile',JSON.stringify(p));setProfile(p)}}/>;
   const switchProfile=()=>{localStorage.removeItem('sceneroot-profile');setProfile(null)};
   return <Routes><Route path="/player/:id" element={<PlayerPage profile={profile}/>}/><Route path="/stream/:id" element={<StreamPlayerPage profile={profile}/>}/><Route path="/rate/:id" element={<RatingPage profile={profile}/>}/><Route path="/title/:id" element={<Shell profile={profile} onSwitchProfile={switchProfile}><DetailPage profile={profile}/></Shell>}/><Route path="*" element={<Shell profile={profile} onSwitchProfile={switchProfile}><Routes>
-    <Route path="/" element={<HomePage profile={profile}/>}/><Route path="/films" element={<BrowsePage kind="film" title="Films"/>}/><Route path="/series" element={<BrowsePage kind="serie" title="Séries"/>}/><Route path="/discover" element={<BrowsePage title="Découvrir"/>}/><Route path="/tonight" element={<TonightPage availableProfiles={availableProfiles}/>}/><Route path="/library" element={<LibraryPage/>}/><Route path="/downloads" element={<DownloadsPage/>}/><Route path="/roots" element={<RootsPage profile={profile}/>}/><Route path="/search" element={<SearchPage/>}/><Route path="/settings" element={<SettingsPage/>}/>
+    <Route path="/" element={<HomePage profile={profile}/>}/><Route path="/films" element={<BrowsePage kind="film" title="Films"/>}/><Route path="/series" element={<BrowsePage kind="serie" title="Séries"/>}/><Route path="/discover" element={<BrowsePage title="Découvrir"/>}/><Route path="/tonight" element={<TonightPage availableProfiles={availableProfiles}/>}/><Route path="/library" element={<LibraryPage/>}/><Route path="/downloads" element={<DownloadsPage/>}/><Route path="/roots" element={<RootsPage profile={profile}/>}/><Route path="/search" element={<SearchPage/>}/><Route path="/settings" element={<SettingsPage/>}/><Route path="/about" element={<AboutPage/>}/>
   </Routes></Shell>}/></Routes>;
 }
 export default App;
