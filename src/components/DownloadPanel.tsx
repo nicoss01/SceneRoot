@@ -14,8 +14,12 @@ export function DownloadPanel({ item, onClose, priority = false, onQueued }: { i
   const [launching, setLaunching] = useState<string | null>(null);
   const [launched, setLaunched] = useState<string | null>(null);
   const [launchError, setLaunchError] = useState('');
+  const [season, setSeason] = useState(1);
+  const [episode, setEpisode] = useState(1);
+  const [wholeSeason, setWholeSeason] = useState(false);
   const kind = item.kind === 'serie' ? 'tv' : 'movie';
   const query = useMemo(() => item.title, [item.title]);
+  const isSeries = item.kind === 'serie';
 
   useEffect(() => {
     let active = true;
@@ -23,6 +27,7 @@ export function DownloadPanel({ item, onClose, priority = false, onQueued }: { i
       setLoading(true); setError('');
       try {
         const params = new URLSearchParams({ q: query, kind });
+        if (isSeries) { params.set('season', String(season)); if (!wholeSeason) params.set('episode', String(episode)); }
         const response = await fetch(`/api/sources/search?${params}`);
         if (!response.ok) throw new Error(`Recherche indisponible (${response.status})`);
         const rows = await response.json() as SourceResult[];
@@ -37,11 +42,11 @@ export function DownloadPanel({ item, onClose, priority = false, onQueued }: { i
       } catch (cause) { if (active) { setError((cause as Error).message); setLoading(false); } }
     })();
     return () => { active = false; };
-  }, [query, kind, item.kind]);
+  }, [query, kind, item.kind, isSeries, season, episode, wholeSeason]);
 
   const launch = async (result: RankedResult) => {
     setLaunchError('');
-    if (!result.link?.startsWith('magnet:?')) { setLaunchError('Cette source ne fournit pas de lien magnet direct.'); return; }
+    if (!result.link || !/^(magnet:\?|https?:\/\/)/i.test(result.link)) { setLaunchError('Cette source ne fournit pas de lien de téléchargement exploitable.'); return; }
     setLaunching(result.id);
     try {
       const response = await fetch('/api/downloads', {
@@ -65,6 +70,11 @@ export function DownloadPanel({ item, onClose, priority = false, onQueued }: { i
       <h2><Download /> {priority ? 'Télécharger et regarder' : 'Télécharger'} « {item.title} »</h2>
       {priority && <p className="download-legal">Le titre sera téléchargé en priorité. La lecture sera disponible dans la médiathèque une fois le fichier prêt (reprise automatique de la progression).</p>}
       <p className="download-legal">Utilisez uniquement des sources et des contenus que vous êtes autorisé à récupérer.</p>
+      {isSeries && <div className="download-episode">
+        <label>Saison<input type="number" min={1} max={99} value={season} onChange={event => setSeason(Math.max(1, Number(event.target.value) || 1))} /></label>
+        <label>Épisode<input type="number" min={1} max={999} value={episode} disabled={wholeSeason} onChange={event => setEpisode(Math.max(1, Number(event.target.value) || 1))} /></label>
+        <button className={`chip ${wholeSeason ? 'is-on' : ''}`} onClick={() => setWholeSeason(value => !value)}>Saison complète</button>
+      </div>}
       {loading && <div className="library-loading"><i /> Recherche sur vos sources…</div>}
       {error && <div className="profile-error">{error}</div>}
       {!loading && !error && !results.length && <div className="library-empty"><Download /><h3>Aucun résultat</h3><p>Aucune source configurée n’a répondu, ou aucune version ne correspond. Ajoutez une source Torznab dans les paramètres.</p></div>}

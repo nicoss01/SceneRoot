@@ -214,15 +214,34 @@ app.post<{Body:{ttl:'shutdown'|'24h'|'7d'|'permanent';ageLimit:number}}>('/api/g
 });
 app.get<{Params:{id:string}}>('/api/guests/:id',async(request,reply)=>{purgeExpiredGuests();const session=loadDb().guests.find(guest=>guest.id===request.params.id);if(!session)return reply.code(404).send({error:'Session invité expirée ou introuvable'});return session});
 
-function envSources():Source[]{const configured:Source[]=[];if(process.env.C411_API_KEY)configured.push({id:'c411',name:'C411',url:'https://c411.org/api/torznab',apiKey:process.env.C411_API_KEY,categories:'2000,5000'});try{configured.push(...JSON.parse(process.env.SCENEROOT_TORZNAB_SOURCES??'[]'))}catch{}return configured}
+function envSources():Source[]{const configured:Source[]=[];if(process.env.C411_API_KEY)configured.push({id:'c411',name:'C411',url:process.env.C411_TORZNAB_URL??'https://c411.org/api/torznab',apiKey:process.env.C411_API_KEY,categories:process.env.C411_CATEGORIES??'2000,5000'});try{configured.push(...JSON.parse(process.env.SCENEROOT_TORZNAB_SOURCES??'[]'))}catch{}return configured}
 function sources():Source[]{return[...envSources(),...(loadDb().settings.torznabSources??[])]}
 function xmlText(block:string,tag:string){const m=block.match(new RegExp(`<${tag}[^>]*>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?</${tag}>`,'i'));return m?.[1]?.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>')}
-app.get<{Querystring:{q:string;kind?:'movie'|'tv';season?:string;episode?:string}}>('/api/sources/search',async(request,reply)=>{if(!request.query.q)return reply.code(400).send({error:'Recherche manquante'});const results=[];for(const source of sources()){const url=new URL(source.url);url.searchParams.set('apikey',source.apiKey);url.searchParams.set('t',request.query.kind==='tv'?'tvsearch':request.query.kind==='movie'?'movie':'search');url.searchParams.set('q',request.query.q);if(source.categories)url.searchParams.set('cat',source.categories);if(request.query.season)url.searchParams.set('season',request.query.season);if(request.query.episode)url.searchParams.set('ep',request.query.episode);try{const res=await fetch(url,{signal:AbortSignal.timeout(10000)});const xml=await res.text();for(const block of xml.match(/<item>[\s\S]*?<\/item>/gi)??[]){results.push({source:source.name,title:xmlText(block,'title'),link:xmlText(block,'link')??xmlText(block,'guid'),size:Number(xmlText(block,'size')??0),seeders:Number(block.match(/name="seeders"[^>]*value="(\d+)"/i)?.[1]??0),published:xmlText(block,'pubDate')})}}catch(error){app.log.warn({source:source.name,error},'Torznab source failed')}}return results});
+function torznabAttr(block:string,name:string){return block.match(new RegExp(`name="${name}"[^>]*value="([^"]+)"`,'i'))?.[1]}
+function torznabLink(block:string){const magnet=torznabAttr(block,'magneturl');if(magnet?.startsWith('magnet:'))return magnet;const link=xmlText(block,'link');if(link?.startsWith('magnet:'))return link;const enclosure=block.match(/<enclosure[^>]*url="([^"]+)"/i)?.[1];return enclosure??link??xmlText(block,'guid')}
+function stripYear(q:string){return q.replace(/\s*\((?:19|20)\d{2}\)\s*$/,'').trim()}
+type TorznabResult={source:string;title?:string;link?:string;size:number;seeders:number;published?:string};
+app.get<{Querystring:{q:string;kind?:'movie'|'tv';season?:string;episode?:string}}>('/api/sources/search',async(request,reply)=>{
+  if(!request.query.q)return reply.code(400).send({error:'Recherche manquante'});
+  const q=stripYear(request.query.q);const results:TorznabResult[]=[];const diagnostics:Array<{source:string;status:number;count:number;error?:string}>=[];
+  for(const source of sources()){
+    const run=async(params:Record<string,string|undefined>)=>{const url=new URL(source.url);url.searchParams.set('apikey',source.apiKey);for(const[key,value]of Object.entries(params))if(value)url.searchParams.set(key,value);try{const res=await fetch(url,{signal:AbortSignal.timeout(12000),headers:{'User-Agent':'SceneRoot/0.1 (+https://github.com/sceneroot)'}});const xml=await res.text();return{status:res.status,ok:res.ok,blocks:xml.match(/<item>[\s\S]*?<\/item>/gi)??[]}}catch(error){return{status:0,ok:false,blocks:[] as string[],error:(error as Error).message}}};
+    const type=request.query.kind==='tv'?'tvsearch':request.query.kind==='movie'?'movie':'search';
+    let attempt=await run({t:type,q,cat:source.categories,season:request.query.season,ep:request.query.episode});
+    if(attempt.ok&&!attempt.blocks.length)attempt=await run({t:'search',q}); // repli : recherche générique sans catégorie ni type
+    diagnostics.push({source:source.name,status:attempt.status,count:attempt.blocks.length,error:(attempt as {error?:string}).error});
+    if(!attempt.ok){app.log.warn({source:source.name,status:attempt.status,url:source.url},'Torznab source failed');continue}
+    for(const block of attempt.blocks)results.push({source:source.name,title:xmlText(block,'title'),link:torznabLink(block),size:Number(torznabAttr(block,'size')??xmlText(block,'size')??0),seeders:Number(torznabAttr(block,'seeders')??0),published:xmlText(block,'pubDate')});
+  }
+  app.log.info({q,diagnostics},'Torznab search');
+  reply.header('X-SceneRoot-Sources',JSON.stringify(diagnostics).slice(0,600));
+  return results;
+});
 
 async function transmission(method:string,args:Record<string,unknown>){const rpc=process.env.TRANSMISSION_RPC_URL;if(!rpc)throw Object.assign(new Error('Configurez TRANSMISSION_RPC_URL'),{statusCode:503});const auth=process.env.TRANSMISSION_RPC_AUTH;const headers:Record<string,string>={'Content-Type':'application/json'};if(auth)headers.Authorization=`Basic ${Buffer.from(auth).toString('base64')}`;const body=JSON.stringify({method,arguments:args});let response=await fetch(rpc,{method:'POST',headers,body,signal:AbortSignal.timeout(10000)});if(response.status===409){headers['X-Transmission-Session-Id']=response.headers.get('x-transmission-session-id')??'';response=await fetch(rpc,{method:'POST',headers,body,signal:AbortSignal.timeout(10000)})}return response}
 function ensureTransmissionSession(){return transmission('session-set',{'download-queue-enabled':true,'download-queue-size':3,'download-dir':downloadDir}).catch(()=>{/* Transmission non configuré : appliqué dès qu'il est disponible */})}
 app.post<{Body:{magnet:string;expectedBytes?:number}}>('/api/downloads', {schema:{body:{type:'object',required:['magnet'],properties:{magnet:{type:'string',minLength:8},expectedBytes:{type:'number',minimum:0}}}}}, async (request,reply)=>{
-  if(!request.body.magnet?.startsWith('magnet:?')) return reply.code(400).send({error:'Lien magnet invalide'});
+  const source=request.body.magnet; if(!source||!/^(magnet:\?|https?:\/\/)/i.test(source)) return reply.code(400).send({error:'Lien de téléchargement invalide (magnet ou URL .torrent attendu)'});
   const targetRoot=mediaRoots.find(existsSync)??dataDir;const disk=statfsSync(targetRoot);const available=disk.bavail*disk.bsize;const reserve=Number(loadDb().settings.minFreeGb??process.env.SCENEROOT_MIN_FREE_GB??50)*1024**3;if(available-(request.body.expectedBytes??0)<reserve)return reply.code(507).send({error:'Espace disque insuffisant',available,reserve,expectedBytes:request.body.expectedBytes??0});
   try{await ensureTransmissionSession();const response=await transmission('torrent-add',{filename:request.body.magnet});return reply.code(response.ok?200:502).send(await response.json())}catch(error){return reply.code((error as {statusCode?:number}).statusCode??503).send({error:(error as Error).message})}
 });
