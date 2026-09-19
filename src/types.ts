@@ -26,8 +26,29 @@ export interface MediaItem {
   localPath?: string;
   source?: 'local' | 'tmdb' | 'tvmaze' | 'wikipedia';
   sourceUrl?: string;
+  informationSource?: string;
   versionCount?: number;
   episodeCount?: number;
   sizeBytes?: number;
   matched?: boolean;
+  local?: boolean;
+}
+
+export interface PlayerTrack {
+  id: number;
+  label: string;
+  lang?: string;
+  selected: boolean;
+}
+
+export interface PlayerStatus {
+  engine: 'mpv';
+  running: boolean;
+  playing?: boolean;
+  position?: number;
+  duration?: number;
+  title?: string;
+  path?: string;
+  audioTracks?: PlayerTrack[];
+  subtitleTracks?: PlayerTrack[];
 }

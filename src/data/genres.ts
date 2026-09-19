@@ -7,7 +7,9 @@ export const movieGenres = [
 export const seriesGenres = [
   'Action & aventure', 'Animation', 'Comédie', 'Policier', 'Documentaire',
   'Drame', 'Famille', 'Enfants', 'Mystère', 'Actualités', 'Téléréalité',
-  'Science-fiction & fantastique', 'Soap', 'Talk-show', 'Guerre & politique', 'Western'
+  'Science-fiction & fantastique', 'Soap', 'Talk-show', 'Guerre & politique', 'Western',
+  'Adulte', 'Anime', 'Bricolage', 'Cuisine', 'Espionnage', 'Juridique',
+  'Médical', 'Nature', 'Sport', 'Surnaturel', 'Voyage'
 ] as const;
 
 export const allGenres = [...new Set<string>([...movieGenres, ...seriesGenres])].sort((a, b) =>

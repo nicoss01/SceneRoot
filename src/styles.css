@@ -248,6 +248,10 @@ section { margin: 0 0 13px; }
 .match-copy h3 { margin: 0; font-size: 18px; }
 .match-copy strong { color: var(--cyan); font-size: 13px; }
 .match-copy p { margin: 4px 0 0; color: #9fb2c9; font-size: 11px; }
+.empty-recommendations { min-height: 170px; display: grid; place-items: center; align-content: center; gap: 5px; color: #a9bad0; text-align: center; background: rgba(5,18,31,.76); border: 1px dashed #31516e; border-radius: 11px; }
+.empty-recommendations svg { color: var(--cyan); }
+.empty-recommendations h3, .empty-recommendations p { margin: 0; }
+.empty-recommendations p { font-size: 13px; }
 
 /* Detail */
 .detail { min-height: calc(100vh - 195px); display: flex; align-items: center; position: relative; overflow: hidden; padding: 55px; background: linear-gradient(90deg,rgba(1,7,14,.92) 8%,rgba(1,7,14,.35)), url('/assets/sceneroot-landscape.png') center/cover; border: 1px solid rgba(39,82,117,.34); border-radius: 15px; }
@@ -284,15 +288,17 @@ section { margin: 0 0 13px; }
 .track-panel button.active { border: 1px solid var(--cyan); box-shadow: 0 0 12px rgba(14,165,233,.35); }
 .player__controls { position: absolute; inset: auto 40px 30px; z-index: 2; }
 .timeline { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 17px; }
-.timeline > i { height: 5px; background: #36516d; border-radius: 5px; }
-.timeline b { width: 29%; height: 100%; display: block; position: relative; background: var(--cyan); }
+.timeline > i { height: 5px; background: #36516d; border-radius: 5px; cursor: pointer; }
+.timeline b { width: 29%; height: 100%; display: block; position: relative; background: var(--cyan); transition: width .3s linear; }
 .timeline b:after { content: ""; width: 17px; height: 17px; position: absolute; right: -8px; top: -6px; background: var(--cyan); border-radius: 50%; box-shadow: 0 0 10px var(--cyan); }
 .controls-row { display: flex; align-items: center; justify-content: center; gap: 15px; margin-top: 21px; }
 .controls-row button { min-width: 115px; height: 68px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; padding: 8px 15px; background: rgba(5,17,30,.88); border: 1px solid #2d4b68; border-radius: 11px; }
 .controls-row button:first-child { flex-direction: row; }
 .controls-row button.round { width: 81px; min-width: 81px; border-color: var(--cyan); border-radius: 50%; box-shadow: 0 0 18px rgba(14,165,233,.5); }
 .controls-row button.selected { border-color: var(--cyan); box-shadow: 0 0 16px rgba(14,165,233,.35); }
+.controls-row button:disabled { opacity: .45; }
 .controls-spacer { flex: 1; }
+.player-note { display: block; margin-top: 6px; color: #9fb6cf; font-size: 12px; }
 
 /* Post-play rating */
 .rating-page { min-height: 100vh; position: relative; display: grid; place-items: center; overflow: hidden; background-position: center; background-size: cover; }
