@@ -255,23 +255,42 @@ function xmlText(block:string,tag:string){const m=block.match(new RegExp(`<${tag
 function torznabAttr(block:string,name:string){return block.match(new RegExp(`name="${name}"[^>]*value="([^"]+)"`,'i'))?.[1]}
 function torznabLink(block:string){const magnet=torznabAttr(block,'magneturl');if(magnet?.startsWith('magnet:'))return magnet;const link=xmlText(block,'link');if(link?.startsWith('magnet:'))return link;const enclosure=block.match(/<enclosure[^>]*url="([^"]+)"/i)?.[1];return enclosure??link??xmlText(block,'guid')}
 function stripYear(q:string){return q.replace(/\s*\((?:19|20)\d{2}\)\s*$/,'').trim()}
+/** Repli pour les trackers qui ignorent season/ep : « Série S01E02 ». */
+function episodeQuery(q:string,season?:string,episode?:string){if(!season)return q;const s=String(season).padStart(2,'0');return episode?`${q} S${s}E${String(episode).padStart(2,'0')}`:`${q} S${s}`}
+/** Un flux Torznab signale ses refus en HTTP 200 avec <error description="…">. */
+function torznabError(xml:string){const match=xml.match(/<error[^>]*description="([^"]*)"/i);if(match)return match[1];if(/<error[^>]*code="/i.test(xml))return 'Erreur Torznab signalée par la source';return undefined}
 type TorznabResult={source:string;title?:string;link?:string;size:number;seeders:number;published?:string};
 // Les trackers privés répondent parfois en 15-20 s sur une recherche « froide » :
 // 12 s expiraient avant la première réponse. Réglable via l'environnement.
 const torznabTimeout=Math.max(5000,Number(process.env.SCENEROOT_TORZNAB_TIMEOUT_MS)||25000);
 app.get<{Querystring:{q:string;kind?:'movie'|'tv';season?:string;episode?:string}}>('/api/sources/search',async(request,reply)=>{
   if(!request.query.q)return reply.code(400).send({error:'Recherche manquante'});
-  const q=stripYear(request.query.q);const results:TorznabResult[]=[];const diagnostics:Array<{source:string;status:number;count:number;error?:string}>=[];
+  const q=stripYear(request.query.q);const results:TorznabResult[]=[];const diagnostics:Array<{source:string;status:number;count:number;error?:string;mode?:string}>=[];
   for(const source of sources()){
     const endpoint=normalizeTorznabUrl(source.url);
-    const once=async(params:Record<string,string|undefined>)=>{const url=new URL(endpoint);url.searchParams.set('apikey',source.apiKey);for(const[key,value]of Object.entries(params))if(value)url.searchParams.set(key,value);try{const res=await fetch(url,{signal:AbortSignal.timeout(torznabTimeout),headers:{'User-Agent':'SceneRoot/0.1 (+https://github.com/sceneroot)'}});const xml=await res.text();return{status:res.status,ok:res.ok,blocks:xml.match(/<item>[\s\S]*?<\/item>/gi)??[],error:res.ok?undefined:`HTTP ${res.status}`}}catch(error){return{status:0,ok:false,blocks:[] as string[],error:(error as Error).message}}};
+    const once=async(params:Record<string,string|undefined>)=>{const url=new URL(endpoint);url.searchParams.set('apikey',source.apiKey);for(const[key,value]of Object.entries(params))if(value)url.searchParams.set(key,value);try{const res=await fetch(url,{signal:AbortSignal.timeout(torznabTimeout),headers:{'User-Agent':'SceneRoot/0.1 (+https://github.com/sceneroot)'}});const xml=await res.text();return{status:res.status,ok:res.ok,blocks:xml.match(/<item(?:\s[^>]*)?>[\s\S]*?<\/item>/gi)??[],error:res.ok?torznabError(xml):`HTTP ${res.status}`}}catch(error){return{status:0,ok:false,blocks:[] as string[],error:(error as Error).message}}};
     // Une expiration est souvent due au réveil du tracker : on relance une fois.
     const run=async(params:Record<string,string|undefined>)=>{const first=await once(params);if(first.ok||!first.error||!/timeout|abort/i.test(first.error))return first;return once(params)};
     const type=request.query.kind==='tv'?'tvsearch':request.query.kind==='movie'?'movie':'search';
-    let attempt=await run({t:type,q,cat:source.categories,season:request.query.season,ep:request.query.episode});
-    if(attempt.ok&&!attempt.blocks.length)attempt=await run({t:'search',q}); // repli : recherche générique sans catégorie ni type
-    diagnostics.push({source:source.name,status:attempt.status,count:attempt.blocks.length,error:(attempt as {error?:string}).error});
-    if(!attempt.ok){app.log.warn({source:source.name,status:attempt.status,url:source.url},'Torznab source failed');continue}
+    // Les trackers francophones n'implémentent pas tous t=movie/tvsearch, les
+    // catégories, ni season/ep : on dégrade jusqu'à la requête la plus simple,
+    // celle que l'on peut reproduire à la main dans un navigateur.
+    const attempts:Array<{mode:string;params:Record<string,string|undefined>}>=[
+      {mode:`t=${type}`,params:{t:type,q,cat:source.categories,season:request.query.season,ep:request.query.episode}},
+      {mode:`t=${type} sans catégorie`,params:{t:type,q,season:request.query.season,ep:request.query.episode}},
+      {mode:'t=search + épisode dans le titre',params:{t:'search',q:episodeQuery(q,request.query.season,request.query.episode)}},
+      {mode:'t=search',params:{t:'search',q}},
+    ].filter((entry,index,all)=>all.findIndex(other=>JSON.stringify(other.params)===JSON.stringify(entry.params))===index);
+    let attempt=await run(attempts[0].params);let mode=attempts[0].mode;
+    for(const next of attempts.slice(1)){
+      if(attempt.blocks.length)break;
+      const candidate=await run(next.params);
+      // On garde la tentative précédente si le repli échoue franchement.
+      if(candidate.ok||!attempt.ok){attempt=candidate;mode=next.mode}
+      if(attempt.blocks.length)break;
+    }
+    diagnostics.push({source:source.name,status:attempt.status,count:attempt.blocks.length,error:attempt.error,mode});
+    if(!attempt.ok){app.log.warn({source:source.name,status:attempt.status,url:endpoint},'Torznab source failed');continue}
     for(const block of attempt.blocks)results.push({source:source.name,title:xmlText(block,'title'),link:torznabLink(block),size:Number(torznabAttr(block,'size')??xmlText(block,'size')??0),seeders:Number(torznabAttr(block,'seeders')??0),published:xmlText(block,'pubDate')});
   }
   app.log.info({q,diagnostics},'Torznab search');

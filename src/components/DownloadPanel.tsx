@@ -18,7 +18,7 @@ export function DownloadPanel({ item, onClose, priority = false, onQueued }: { i
   const [season, setSeason] = useState(1);
   const [episode, setEpisode] = useState(1);
   const [wholeSeason, setWholeSeason] = useState(false);
-  const [diagnostics, setDiagnostics] = useState<Array<{ source: string; status: number; count: number; error?: string }>>([]);
+  const [diagnostics, setDiagnostics] = useState<Array<{ source: string; status: number; count: number; error?: string; mode?: string }>>([]);
   const kind = item.kind === 'serie' ? 'tv' : 'movie';
   const query = useMemo(() => item.title, [item.title]);
   const isSeries = item.kind === 'serie';
@@ -83,7 +83,10 @@ export function DownloadPanel({ item, onClose, priority = false, onQueued }: { i
       {error && <div className="profile-error">{error}</div>}
       {!loading && !error && !results.length && <div className="library-empty"><Download /><h3>Aucun résultat</h3><p>Aucune source configurée n’a répondu, ou aucune version ne correspond. Ajoutez une source Torznab dans les paramètres.</p>
         {diagnostics.length > 0 && <div className="source-diagnostics">{diagnostics.map(entry => <div key={entry.source}>
-          <strong>{entry.source}</strong> — {entry.error ? `injoignable : ${entry.error}` : `HTTP ${entry.status} · ${entry.count} résultat${entry.count > 1 ? 's' : ''}`}
+          <strong>{entry.source}</strong> — {entry.error
+            ? entry.status === 0 ? `injoignable : ${entry.error}` : `refus de la source : ${entry.error}`
+            : `HTTP ${entry.status} · ${entry.count} résultat${entry.count > 1 ? 's' : ''}`}
+          {entry.mode && <em> · requête {entry.mode}</em>}
           {!entry.error && entry.status === 200 && entry.count === 0 && <em> (la source répond mais ne renvoie rien : vérifiez l’URL Torznab, la clé et les catégories)</em>}
           {!entry.error && entry.status >= 400 && <em> (URL ou clé API incorrecte)</em>}
         </div>)}</div>}
