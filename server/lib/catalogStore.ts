@@ -121,6 +121,12 @@ export class CatalogStore {
     if (!DatabaseSync) return;
     this.db = new DatabaseSync(this.file);
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000');
+    this.migrate();
+  }
+
+  /** Crée le schéma et applique les migrations. Rejouable après une remise à zéro. */
+  private migrate(): void {
+    if (!this.db) return;
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS catalog_titles(
         imdb_id TEXT PRIMARY KEY, kind TEXT NOT NULL, primary_title TEXT NOT NULL, original_title TEXT,
@@ -162,6 +168,19 @@ export class CatalogStore {
         CREATE INDEX IF NOT EXISTS idx_catalog_browse_recent ON catalog_titles(browsable, start_year DESC, votes DESC, rating DESC);
       `);
     } catch { /* colonne générée indisponible : on reste sur les index d'origine */ }
+  }
+
+  /**
+   * Remet le catalogue à zéro : les tables sont supprimées puis recréées, ce
+   * qui est bien plus rapide que d'effacer des centaines de milliers de lignes,
+   * et le fichier est compacté dans la foulée.
+   */
+  reset(): void {
+    if (!this.db) return;
+    this.invalidateCounts();
+    this.db.exec('DROP TABLE IF EXISTS catalog_titles; DROP TABLE IF EXISTS catalog_episodes; DROP TABLE IF EXISTS catalog_localized; DROP TABLE IF EXISTS catalog_sync;');
+    this.migrate();
+    try { this.db.exec('VACUUM') } catch { /* compactage facultatif */ }
   }
 
   /**

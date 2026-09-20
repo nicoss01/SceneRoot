@@ -27,4 +27,15 @@ describe('IMDb synchronization', () => {
     expect(store.seasons('tt100')[0].episodes[0]).toMatchObject({imdbId:'tt101',episode:1});
     expect(store.syncStates()[0]).toMatchObject({source:'imdb',status:'complete',phase:'Catalogue local à jour'});
   });
+
+  it('stops on request without reporting a failure', async () => {
+    const dir=mkdtempSync(join(tmpdir(),'sceneroot-imdb-'));const store=new CatalogStore(dir);resources.push({dir,store});
+    const controller=new AbortController();
+    // L'arrêt est demandé dès la première requête réseau.
+    const fetcher:typeof fetch=async()=>{controller.abort();return new Response(gzipSync('tconst'),{status:200})};
+    await expect(syncImdbCatalog(store,{fetcher,signal:controller.signal})).resolves.toBeUndefined();
+    // Un arrêt demandé n'est pas une panne : l'état revient au repos, sans erreur.
+    expect(store.syncStates()[0]).toMatchObject({source:'imdb',status:'idle',phase:'Synchronisation arrêtée'});
+    expect(store.syncStates()[0].error).toBeUndefined();
+  });
 });

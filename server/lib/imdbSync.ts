@@ -22,16 +22,25 @@ function optionalNumber(value: string): number | undefined {
   const number = Number(value); return Number.isFinite(number) ? number : undefined;
 }
 
-async function linesFromGzip(url: string, fetcher: typeof fetch): Promise<AsyncIterable<string>> {
-  const response = await fetcher(url, { headers: { 'User-Agent': 'SceneRoot/0.1 (local family media center)' }, signal: AbortSignal.timeout(30 * 60_000) });
+async function linesFromGzip(url: string, fetcher: typeof fetch, signal?: AbortSignal): Promise<AsyncIterable<string>> {
+  // Deux raisons d'abandonner : un téléchargement qui s'éternise, ou un arrêt
+  // demandé depuis les réglages.
+  const deadline = AbortSignal.timeout(30 * 60_000);
+  const response = await fetcher(url, { headers: { 'User-Agent': 'SceneRoot/0.1 (local family media center)' }, signal: signal ? AbortSignal.any([deadline, signal]) : deadline });
   if (!response.ok || !response.body) throw new Error(`IMDb ${response.status} pour ${url}`);
   const source = Readable.fromWeb(response.body as never).pipe(createGunzip());
   return createInterface({ input: source, crlfDelay: Infinity });
 }
 
+/** Levée lorsqu'un arrêt est demandé : ce n'est pas une panne. */
+export class SyncCancelled extends Error {
+  constructor() { super('Synchronisation arrêtée'); this.name = 'SyncCancelled' }
+}
+
 export async function syncImdbCatalog(store: CatalogStore, options: {
   fetcher?: typeof fetch;
   onProgress?: (progress: ImdbSyncProgress) => void;
+  signal?: AbortSignal;
 } = {}): Promise<void> {
   if (!store.available) throw new Error('SQLite indisponible : import IMDb impossible');
   const fetcher = options.fetcher ?? fetch;
@@ -42,11 +51,13 @@ export async function syncImdbCatalog(store: CatalogStore, options: {
     const progress = { phase, processed, startedAt };
     store.setSync({ source: 'imdb', status: 'running', ...progress }); options.onProgress?.(progress);
   };
+  // Vérifié à chaque lot : l'arrêt est effectif en une fraction de seconde.
+  const stopIfCancelled = () => { if (options.signal?.aborted) throw new SyncCancelled() };
   report('Téléchargement des titres');
   try {
     const titles: CatalogTitleInput[] = [];
     let first = true;
-    for await (const line of await linesFromGzip(`${BASE}/title.basics.tsv.gz`, fetcher)) {
+    for await (const line of await linesFromGzip(`${BASE}/title.basics.tsv.gz`, fetcher, options.signal)) {
       if (first) { first = false; continue; }
       const [imdbId, rawType, primaryTitle, originalTitle, adult, startYear, endYear, runtime, rawGenres] = line.split('\t');
       const kind = TITLE_TYPES.get(rawType); if (!kind || !imdbId || !primaryTitle) continue;
@@ -54,32 +65,42 @@ export async function syncImdbCatalog(store: CatalogStore, options: {
         startYear: optionalNumber(startYear), endYear: optionalNumber(endYear), runtimeMinutes: optionalNumber(runtime),
         genres: rawGenres === '\\N' ? [] : rawGenres.split(',').filter(Boolean).map(genre => GENRES[genre] ?? genre), adult: adult === '1' });
       processed++;
-      if (titles.length >= BATCH) { store.upsertTitles(titles.splice(0), token); if (processed % 20_000 === 0) report('Import des titres'); }
+      if (titles.length >= BATCH) { stopIfCancelled(); store.upsertTitles(titles.splice(0), token); if (processed % 20_000 === 0) report('Import des titres'); }
     }
+    stopIfCancelled();
     store.upsertTitles(titles, token); store.finishDataset('basics', token);
 
     processed = 0; report('Import des notes');
     const ratings: CatalogRatingInput[] = []; first = true;
-    for await (const line of await linesFromGzip(`${BASE}/title.ratings.tsv.gz`, fetcher)) {
+    for await (const line of await linesFromGzip(`${BASE}/title.ratings.tsv.gz`, fetcher, options.signal)) {
       if (first) { first = false; continue; }
       const [imdbId, rating, votes] = line.split('\t'); ratings.push({ imdbId, rating:Number(rating)||0, votes:Number(votes)||0 }); processed++;
-      if (ratings.length >= BATCH) { store.upsertRatings(ratings.splice(0)); if (processed % 20_000 === 0) report('Import des notes'); }
+      if (ratings.length >= BATCH) { stopIfCancelled(); store.upsertRatings(ratings.splice(0)); if (processed % 20_000 === 0) report('Import des notes'); }
     }
+    stopIfCancelled();
     store.upsertRatings(ratings);
 
     processed = 0; report('Import des saisons et épisodes');
     const episodes: CatalogEpisodeInput[] = []; first = true;
-    for await (const line of await linesFromGzip(`${BASE}/title.episode.tsv.gz`, fetcher)) {
+    for await (const line of await linesFromGzip(`${BASE}/title.episode.tsv.gz`, fetcher, options.signal)) {
       if (first) { first = false; continue; }
       const [imdbId, parentImdbId, season, episode] = line.split('\t');
       episodes.push({ imdbId, parentImdbId, season:optionalNumber(season), episode:optionalNumber(episode) }); processed++;
-      if (episodes.length >= BATCH) { store.upsertEpisodes(episodes.splice(0), token); if (processed % 20_000 === 0) report('Import des saisons et épisodes'); }
+      if (episodes.length >= BATCH) { stopIfCancelled(); store.upsertEpisodes(episodes.splice(0), token); if (processed % 20_000 === 0) report('Import des saisons et épisodes'); }
     }
+    stopIfCancelled();
     store.upsertEpisodes(episodes, token); store.finishDataset('episodes', token);
     const completedAt = new Date().toISOString();
     store.setSync({ source:'imdb', status:'complete', phase:'Catalogue local à jour', startedAt, completedAt, processed });
   } catch (error) {
-    store.setSync({ source:'imdb', status:'error', phase:'Échec de la synchronisation', startedAt, completedAt:new Date().toISOString(), processed, error:(error as Error).message });
-    throw error;
+    const cancelled = error instanceof SyncCancelled || (error as Error).name === 'AbortError';
+    store.setSync({
+      source:'imdb',
+      status: cancelled ? 'idle' : 'error',
+      phase: cancelled ? 'Synchronisation arrêtée' : 'Échec de la synchronisation',
+      startedAt, completedAt:new Date().toISOString(), processed,
+      error: cancelled ? undefined : (error as Error).message,
+    });
+    if (!cancelled) throw error;
   }
 }

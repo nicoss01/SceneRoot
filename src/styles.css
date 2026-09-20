@@ -630,3 +630,7 @@ body.hide-cursor, body.hide-cursor * { cursor: none !important; }
 .search-remote h3 { margin: 0 0 6px; font-size: 19px; }
 .search-remote p { margin: 0 0 6px; color: var(--muted); line-height: 1.45; }
 .search-remote small { color: #6f89a6; word-break: break-all; }
+.catalog-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
+.catalog-actions button { flex: 0 0 auto; }
+.danger-button { display: inline-flex; align-items: center; gap: 8px; padding: 12px 18px; color: #ff8a95; background: transparent; border: 1px solid #733a43; border-radius: 12px; }
+.danger-button:disabled { opacity: .5; }
