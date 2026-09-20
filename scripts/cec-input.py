@@ -39,12 +39,15 @@ KEYS = {
     "subtitles": (ecodes.KEY_V,),
     "closed caption": (ecodes.KEY_V,),
     "f4 (yellow)": (ecodes.KEY_V,),
+    "f4": (ecodes.KEY_V,),
     "yellow": (ecodes.KEY_V,),
     "f3 (green)": (ecodes.KEY_J,),
+    "f3": (ecodes.KEY_J,),
     "green": (ecodes.KEY_J,),
     "sound select": (ecodes.KEY_A,),
     "audio language": (ecodes.KEY_A,),
     "f2 (red)": (ecodes.KEY_A,),
+    "f2": (ecodes.KEY_A,),
     "red": (ecodes.KEY_A,),
 }
 
