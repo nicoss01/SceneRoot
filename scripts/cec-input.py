@@ -70,6 +70,7 @@ def run() -> None:
     capabilities = {ecodes.EV_KEY: sorted({key for chord in KEYS.values() for key in chord})}
     last_name: str | None = None
     last_time = 0.0
+    last_unknown: str | None = None
     with UInput(capabilities, name="SceneRoot HDMI-CEC Remote", bustype=0x03) as ui:
         print("SceneRoot CEC: périphérique virtuel prêt", flush=True)
         while True:
@@ -93,6 +94,11 @@ def run() -> None:
                     name = " ".join(match.group(1).strip().lower().split())
                     chord = KEYS.get(name)
                     if not chord:
+                        # Une touche non reconnue reste muette : on la nomme dans
+                        # le journal pour pouvoir l'ajouter à KEYS au besoin.
+                        if name != last_unknown:
+                            print(f"SceneRoot CEC: touche non associee « {name} »", flush=True)
+                            last_unknown = name
                         continue
                     now = time.monotonic()
                     if name == last_name and now - last_time < DEBOUNCE_SECONDS:
