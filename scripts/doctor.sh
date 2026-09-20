@@ -12,6 +12,7 @@ if [[ -t 1 ]]; then C_R=$'\e[0m'; C_G=$'\e[38;5;42m'; C_Y=$'\e[38;5;220m'; C_E=$
 else C_R=; C_G=; C_Y=; C_E=; C_B=; fi
 ok()   { echo "  ${C_G}✓${C_R} $1"; }
 warn() { echo "  ${C_Y}!${C_R} $1"; }
+info() { echo "  $1"; }
 bad()  { echo "  ${C_E}✗${C_R} $1"; FAILED=$((FAILED+1)); }
 head_() { echo; echo "${C_B}$1${C_R}"; }
 FAILED=0
@@ -92,6 +93,23 @@ if [[ -d "$DL" ]]; then
   FREE="$(df -BG --output=avail "$DL" 2>/dev/null | tail -1 | tr -dc '0-9')"
   [[ -n "$FREE" ]] && { (( FREE > 5 )) && ok "${FREE} Go libres" || warn "${FREE} Go libres : baissez la réserve d'espace dans les réglages"; }
 fi
+
+head_ "Affichage du kiosque"
+CMDLINE=/boot/firmware/cmdline.txt; [[ -f $CMDLINE ]] || CMDLINE=/boot/cmdline.txt
+if [[ -f "$CMDLINE" ]]; then
+  if sudo grep -q 'video=HDMI' "$CMDLINE"; then ok "Sortie HDMI forcée : $(sudo grep -o 'video=HDMI[^ ]*' "$CMDLINE" | head -1)"
+  else
+    # Une sortie 4K fait souvent échouer Chromium sur un Raspberry Pi : le
+    # compositeur redémarre alors en boucle, écran noir puis journal.
+    if (( FIX )); then
+      sudo sed -i 's/[[:space:]]*$/ video=HDMI-A-1:1920x1080M@60/' "$CMDLINE" && ok "Sortie forcée en 1080p (effectif au prochain redémarrage)"
+    else bad "Sortie HDMI non forcée : en 4K, Chromium peut échouer et le kiosque tourner en boucle (--fix corrige)"; fi
+  fi
+else warn "$CMDLINE introuvable : machine non Raspberry Pi ?"; fi
+if [[ -s /tmp/sceneroot-kiosk.log ]]; then
+  KIOSK_ERR="$(grep -ciE 'introuvable|s.est arrêté|error|failed' /tmp/sceneroot-kiosk.log || true)"
+  (( KIOSK_ERR > 0 )) && warn "$KIOSK_ERR ligne(s) d'erreur dans /tmp/sceneroot-kiosk.log" || ok "Journal du kiosque sans erreur"
+else info "Aucun journal de kiosque (/tmp/sceneroot-kiosk.log)"; fi
 
 head_ "Serveur SceneRoot"
 # Le serveur ne relit /etc/sceneroot.env qu'au démarrage : on le relance avant

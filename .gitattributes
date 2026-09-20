@@ -1,0 +1,8 @@
+# Les scripts partent sur un Raspberry Pi : ils doivent garder des fins de
+# ligne Unix, sans quoi bash refuse la ligne « #!/usr/bin/env bash\r ».
+*.sh text eol=lf
+*.py text eol=lf
+*.lua text eol=lf
+*.service text eol=lf
+*.timer text eol=lf
+*.desktop text eol=lf
