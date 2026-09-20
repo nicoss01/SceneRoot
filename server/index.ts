@@ -559,7 +559,26 @@ app.get<{Params:{id:string}}>('/api/media/:id', async (request, reply) => {
 });
 app.post<{Body:Rating}>('/api/ratings', {schema:{body:{type:'object',required:['profileId','mediaId','score'],properties:{profileId:{type:'string',minLength:1},mediaId:{type:'string',minLength:1},score:{type:'number',minimum:0,maximum:10},tags:{type:'array',items:{type:'string'}}}}}}, async request => { const db=loadDb(); const rating={...request.body,at:new Date().toISOString()}; db.ratings=db.ratings.filter(x=>!(x.profileId===rating.profileId&&x.mediaId===rating.mediaId));db.ratings.push(rating);saveDb(db);return rating; });
 app.put<{Params:{profileId:string;mediaId:string};Body:{position:number;duration?:number}}>('/api/playback/:profileId/:mediaId', {schema:{body:{type:'object',required:['position'],properties:{position:{type:'number',minimum:0},duration:{type:'number',minimum:0}}}}}, async request=>{const db=loadDb();db.playback[`${request.params.profileId}:${request.params.mediaId}`]={position:Number(request.body.position)||0,duration:Number(request.body.duration)||0,updatedAt:new Date().toISOString()};saveDb(db);return{ok:true}});
-app.get<{Params:{profileId:string}}>('/api/playback/:profileId',async request=>{const db=loadDb();const groups=groupLibrary(db.library);const prefix=`${request.params.profileId}:`;return Object.entries(db.playback).filter(([key])=>key.startsWith(prefix)).map(([key,value])=>{const entry=playbackEntry(value);if(!entry)return null;const mediaId=key.slice(prefix.length);const group=groupForMedia(groups,mediaId);if(!group)return null;const progress=entry.duration>0?entry.position/entry.duration:0;return{group,mediaId,position:entry.position,duration:entry.duration,progress,updatedAt:entry.updatedAt,completed:progress>=0.92,dismissed:entry.dismissed===true}}).filter((entry): entry is NonNullable<typeof entry>=>entry!==null&&!entry.completed&&!entry.dismissed).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt))});
+/**
+ * Lectures en cours du profil. Les épisodes d'une même série partagent son
+ * groupe : on n'en garde que le plus récent, avec sa saison et son numéro, pour
+ * que le tableau de bord affiche une seule carte par série.
+ */
+app.get<{Params:{profileId:string}}>('/api/playback/:profileId',async request=>{
+  const db=loadDb();const groups=groupLibrary(db.library);const prefix=`${request.params.profileId}:`;
+  const entries=Object.entries(db.playback).map(([key,value])=>{
+    if(!key.startsWith(prefix))return null;
+    const entry=playbackEntry(value);if(!entry)return null;
+    const mediaId=key.slice(prefix.length);
+    const group=groupForMedia(groups,mediaId);if(!group)return null;
+    const progress=entry.duration>0?entry.position/entry.duration:0;
+    const version=group.versions.find(item=>item.id===mediaId);
+    return{group,mediaId,position:entry.position,duration:entry.duration,progress,updatedAt:entry.updatedAt,completed:progress>=0.92,dismissed:entry.dismissed===true,season:version?.season,episode:version?.episode};
+  }).filter((entry): entry is NonNullable<typeof entry>=>entry!==null&&!entry.completed&&!entry.dismissed)
+    .sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));
+  const seen=new Set<string>();
+  return entries.filter(entry=>{if(seen.has(entry.group.id))return false;seen.add(entry.group.id);return true});
+});
 app.get<{Params:{profileId:string}}>('/api/history/:profileId',async request=>{const db=loadDb();const groups=groupLibrary(db.library);const prefix=`${request.params.profileId}:`;const seen=new Map<string,{group:LibraryGroup;mediaId:string;progress:number;position:number;duration:number;updatedAt:string;completed:boolean;rating?:number;tags?:string[]}>();for(const[key,value]of Object.entries(db.playback)){if(!key.startsWith(prefix))continue;const entry=playbackEntry(value);if(!entry)continue;const mediaId=key.slice(prefix.length);const group=groupForMedia(groups,mediaId);if(!group)continue;const progress=entry.duration>0?entry.position/entry.duration:0;seen.set(group.id,{group,mediaId,progress,position:entry.position,duration:entry.duration,updatedAt:entry.updatedAt,completed:progress>=0.92})}for(const rating of db.ratings.filter(r=>r.profileId===request.params.profileId)){const group=groupForMedia(groups,rating.mediaId);if(!group)continue;const existing=seen.get(group.id);if(existing){existing.rating=rating.score;existing.tags=rating.tags;if(rating.at>existing.updatedAt)existing.updatedAt=rating.at}else seen.set(group.id,{group,mediaId:rating.mediaId,progress:0,position:0,duration:0,updatedAt:rating.at,completed:true,rating:rating.score,tags:rating.tags})}return[...seen.values()].sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt))});
 app.get<{Params:{profileId:string}}>('/api/ratings/:profileId',async request=>loadDb().ratings.filter(rating=>rating.profileId===request.params.profileId));
 /**

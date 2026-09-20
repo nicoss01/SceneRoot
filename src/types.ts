@@ -33,6 +33,8 @@ export interface MediaItem {
   matched?: boolean;
   local?: boolean;
   badge?: 'new' | 'episode';
+  /** Épisode en cours, affiché sur la carte de reprise : « S02 · E05 ». */
+  episodeLabel?: string;
 }
 
 export interface PlayerTrack {

@@ -19,7 +19,7 @@ export function MediaCard({ item, active, onOpen, onDismiss, wide = false }: { i
     </div>
     <div className="media-card__body">
       <strong>{item.title}</strong>
-      <small>{item.kind === 'film' ? 'Film' : 'Série'} · {item.year} · {item.duration}</small>
+      <small>{item.episodeLabel ? <><b className="episode-tag">{item.episodeLabel}</b> · {item.kind === 'film' ? 'Film' : 'Série'} · {item.year}</> : <>{item.kind === 'film' ? 'Film' : 'Série'} · {item.year} · {item.duration}</>}</small>
       {item.rating > 0 && <span className="media-card__rating"><Star size={14} fill="currentColor" /> {item.rating}</span>}
       {item.progress !== undefined && <span className="progress"><i style={{ width: `${item.progress}%` }} /></span>}
     </div>

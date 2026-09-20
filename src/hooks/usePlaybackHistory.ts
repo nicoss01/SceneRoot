@@ -3,7 +3,14 @@ import { rememberCatalogItems } from '../data/catalog';
 import { libraryGroupToMedia, type LibraryGroup } from '../data/library';
 import type { MediaItem } from '../types';
 
-type ResumeEntry = { group: LibraryGroup; mediaId: string; position: number; duration: number; progress: number; updatedAt: string };
+type ResumeEntry = { group: LibraryGroup; mediaId: string; position: number; duration: number; progress: number; updatedAt: string; season?: number; episode?: number };
+
+/** « S02 · E05 » lorsque la reprise porte sur un épisode identifié. */
+function episodeLabel(entry: { season?: number; episode?: number }): string | undefined {
+  if (entry.episode === undefined) return undefined;
+  const season = entry.season !== undefined ? `S${String(entry.season).padStart(2, '0')} · ` : '';
+  return `${season}E${String(entry.episode).padStart(2, '0')}`;
+}
 type HistoryEntry = ResumeEntry & { completed: boolean; rating?: number; tags?: string[] };
 
 function useEndpoint<T>(url: string, map: (rows: T[]) => MediaItem[]) {
@@ -32,7 +39,7 @@ export function useResume(profileId: string) {
   // celui de la lecture elle-même, que l'on garde en correspondance.
   const keys = useRef<Record<string, string>>({});
   const result = useEndpoint<ResumeEntry>(`/api/playback/${encodeURIComponent(profileId)}`, rows => {
-    const mapped = rows.map((row, index) => ({ media: libraryGroupToMedia(row.group, index, Math.min(100, Math.round(row.progress * 100))), mediaId: row.mediaId }));
+    const mapped = rows.map((row, index) => ({ media: { ...libraryGroupToMedia(row.group, index, Math.min(100, Math.round(row.progress * 100))), episodeLabel: episodeLabel(row) }, mediaId: row.mediaId }));
     keys.current = Object.fromEntries(mapped.map(entry => [entry.media.id, entry.mediaId]));
     return mapped.map(entry => entry.media);
   });
