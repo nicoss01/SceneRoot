@@ -26,6 +26,10 @@
   .submit { position:fixed; left:0; right:0; bottom:0; padding:12px 16px calc(12px + env(safe-area-inset-bottom)); background:#04121fee; border-top:1px solid var(--border); backdrop-filter:blur(6px); }
   .submit button { width:100%; padding:16px; font-size:16px; font-weight:600; color:#03151f; background:var(--cyan); border:1px solid var(--cyan); border-radius:12px; }
   .submit button:disabled { opacity:.5; }
+  .tabs { display:flex; gap:8px; margin-bottom:4px; }
+  .tab { flex:1; padding:12px 10px; font-size:15px; color:var(--muted); background:var(--panel2); border:1px solid var(--border); border-radius:12px; }
+  .tab.on { color:var(--cyan); border-color:var(--cyan); background:rgba(34,211,238,.12); }
+  .file-drop { display:block; margin:12px 0 4px; padding:22px 16px; text-align:center; color:var(--text); background:var(--panel2); border:1px dashed #2b5478; border-radius:12px; }
   .toast { position:fixed; left:50%; bottom:84px; transform:translateX(-50%); padding:12px 18px; border-radius:10px; font-size:14px; z-index:10; max-width:90%; }
   .toast.ok { background:#0c3b2b; color:var(--ok); border:1px solid var(--ok); }
   .toast.err { background:#3b141a; color:var(--danger); border:1px solid #733a43; }
@@ -37,6 +41,12 @@
   <p>Pilotez la recherche affichée sur le téléviseur</p>
 </header>
 <main>
+  <div class="tabs">
+    <button id="tabSearch" class="tab on">🔎 Recherche</button>
+    <button id="tabTorrent" class="tab">⬇️ Charger un torrent</button>
+  </div>
+
+  <div id="panelSearch">
   <section class="card">
     <h2>🔎 Recherche</h2>
     <input id="query" placeholder="Titre d'un film ou d'une série…" autocomplete="off" enterkeyhint="search" />
@@ -56,8 +66,25 @@
     <input id="rating" type="range" min="0" max="10" step="1" value="0" />
   </section>
   <p class="muted">Le téléviseur applique la recherche en une seconde ou deux. Laissez cette page ouverte pour enchaîner les essais.</p>
+  </div>
+
+  <div id="panelTorrent" hidden>
+    <section class="card">
+      <h2>⬇️ Charger un torrent</h2>
+      <p class="muted">Déposez un fichier .torrent enregistré sur ce téléphone, ou collez un lien magnet : le téléchargement rejoint la file du téléviseur.</p>
+      <label class="file-drop" for="torrentFile"><span id="torrentName">Choisir un fichier .torrent</span></label>
+      <input id="torrentFile" type="file" accept=".torrent,application/x-bittorrent" hidden />
+      <label for="magnet">Ou coller un lien magnet</label>
+      <input id="magnet" placeholder="magnet:?xt=urn:btih:…" autocomplete="off" spellcheck="false" />
+      <div id="tokenRow" hidden>
+        <label for="token">Jeton d'administration</label>
+        <input id="token" type="password" autocomplete="off" placeholder="Requis pour ajouter à distance" />
+        <div class="muted">Affiché dans les réglages du téléviseur, avec le QR code.</div>
+      </div>
+    </section>
+  </div>
 </main>
-<div class="submit"><button id="send">Lancer la recherche sur la TV</button></div>
+<div class="submit"><button id="send">Lancer la recherche sur la TV</button><button id="sendTorrent" hidden>Ajouter le téléchargement</button></div>
 <div id="toast" class="toast" style="display:none"></div>
 
 <script>
@@ -116,6 +143,73 @@
   document.getElementById('genre').addEventListener('change',send);
   document.getElementById('query').addEventListener('keydown',function(event){ if(event.key==='Enter'){ event.preventDefault(); this.blur(); send(); } });
   document.getElementById('send').addEventListener('click',send);
+
+  // ── Onglet « Charger un torrent » ──────────────────────────────────────────
+  var TKEY='sceneroot-admin-token';
+  var chosenFile=null;
+  // Le QR des réglages partage le jeton via #t=... ; il est stocké pour ce navigateur.
+  try {
+    var hash=(location.hash||'').match(/[#&]t=([^&]+)/);
+    if(hash){ localStorage.setItem(TKEY,decodeURIComponent(hash[1])); history.replaceState(null,'',location.pathname+location.search); }
+  } catch(e){}
+  function storedToken(){ try{ return localStorage.getItem(TKEY)||''; }catch(e){ return ''; } }
+
+  function showTab(name){
+    var torrent=name==='torrent';
+    document.getElementById('panelSearch').hidden=torrent;
+    document.getElementById('panelTorrent').hidden=!torrent;
+    document.getElementById('send').hidden=torrent;
+    document.getElementById('sendTorrent').hidden=!torrent;
+    document.getElementById('tabSearch').className='tab'+(torrent?'':' on');
+    document.getElementById('tabTorrent').className='tab'+(torrent?' on':'');
+    var token=document.getElementById('token');
+    if(torrent&&!token.value) token.value=storedToken();
+  }
+  document.getElementById('tabSearch').addEventListener('click',function(){ showTab('search'); });
+  document.getElementById('tabTorrent').addEventListener('click',function(){ showTab('torrent'); });
+
+  document.getElementById('torrentFile').addEventListener('change',function(){
+    chosenFile=this.files&&this.files[0]?this.files[0]:null;
+    document.getElementById('torrentName').textContent=chosenFile?chosenFile.name:'Choisir un fichier .torrent';
+  });
+
+  /** Un .torrent est binaire : transmis en base64, par tranches pour ne pas saturer la pile. */
+  async function toBase64(file){
+    var bytes=new Uint8Array(await file.arrayBuffer());
+    var binary='';
+    for(var index=0;index<bytes.length;index+=8192) binary+=String.fromCharCode.apply(null,bytes.subarray(index,index+8192));
+    return btoa(binary);
+  }
+
+  async function sendTorrent(){
+    var button=document.getElementById('sendTorrent');
+    var magnet=document.getElementById('magnet').value.trim();
+    if(!chosenFile&&!magnet){ toast('Choisissez un fichier ou collez un lien magnet',false); return; }
+    button.disabled=true;
+    try{
+      var body=chosenFile?{ name:chosenFile.name, metainfo:await toBase64(chosenFile) }:{ magnet:magnet };
+      var headers={'Content-Type':'application/json'};
+      var token=document.getElementById('token').value.trim()||storedToken();
+      if(token) headers['X-SceneRoot-Token']=token;
+      var response=await fetch('/api/downloads/torrent',{ method:'POST', headers:headers, body:JSON.stringify(body) });
+      var data=null; try{ data=await response.json(); }catch(e){}
+      if(response.status===401){
+        // Administration à distance verrouillée : on réclame le jeton une fois.
+        document.getElementById('tokenRow').hidden=false;
+        throw new Error('Jeton d’administration requis');
+      }
+      if(!response.ok) throw new Error((data&&data.error)||('Échec ('+response.status+')'));
+      if(token){ try{ localStorage.setItem(TKEY,token); }catch(e){} }
+      var added=data&&data.arguments&&(data.arguments['torrent-added']||data.arguments['torrent-duplicate']);
+      toast(added&&added.name?'« '+added.name+' » ajouté':'Téléchargement ajouté',true);
+      chosenFile=null;
+      document.getElementById('torrentFile').value='';
+      document.getElementById('torrentName').textContent='Choisir un fichier .torrent';
+      document.getElementById('magnet').value='';
+    }catch(e){ toast(e.message,false); }
+    finally{ button.disabled=false; }
+  }
+  document.getElementById('sendTorrent').addEventListener('click',sendTorrent);
 })();
 </script>
 </body>
