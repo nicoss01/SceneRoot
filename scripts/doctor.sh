@@ -62,7 +62,7 @@ if [[ "$CODE" == 401 ]] && (( FIX )); then
   # Debian impose des identifiants RPC que nous ne connaissons pas : on en pose
   # de nouveaux, réutilisables par le serveur.
   DL_FOR_TR="$(sudo grep -m1 '^SCENEROOT_MEDIA=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- | cut -d, -f1)"
-  if sudo "$(dirname "$0")/transmission-setup.sh" "${DL_FOR_TR:-/mnt/media}/downloads" "$ENV_FILE"; then
+  if sudo bash "$(dirname "$0")/transmission-setup.sh" "${DL_FOR_TR:-/mnt/media}/downloads" "$ENV_FILE"; then
     ok "Identifiants RPC dédiés installés"
     sleep 2  # laisse le démon recharger sa configuration
     CODE="$(probe_rpc)"
@@ -93,6 +93,23 @@ if [[ -d "$DL" ]]; then
   FREE="$(df -BG --output=avail "$DL" 2>/dev/null | tail -1 | tr -dc '0-9')"
   [[ -n "$FREE" ]] && { (( FREE > 5 )) && ok "${FREE} Go libres" || warn "${FREE} Go libres : baissez la réserve d'espace dans les réglages"; }
 fi
+
+head_ "Lanceur du kiosque"
+# Un git pull réécrit les scripts avec les droits du dépôt : sans le bit
+# exécutable, cage sort aussitôt et l'écran repart en boucle toutes les 3 s.
+for f in kiosk.sh doctor.sh update.sh transmission-setup.sh cec-input.py park-cursor.py; do
+  SCRIPT="$(dirname "$0")/$f"
+  [[ -f "$SCRIPT" ]] || continue
+  if [[ -x "$SCRIPT" ]]; then continue; fi
+  if (( FIX )); then chmod +x "$SCRIPT" && ok "$f rendu exécutable"; else bad "$f n'est pas exécutable (--fix corrige)"; fi
+done
+[[ $(ls -1 "$(dirname "$0")"/*.sh 2>/dev/null | wc -l) -gt 0 ]] && ok "Scripts présents dans $(dirname "$0")"
+if grep -q 'cage -- /bin/bash' "$HOME/.bash_profile" 2>/dev/null; then ok "Kiosque lancé via bash (insensible aux droits)"
+elif grep -q 'cage --' "$HOME/.bash_profile" 2>/dev/null; then
+  if (( FIX )); then
+    sed -i 's|cage -- /opt/sceneroot/scripts/kiosk.sh|cage -- /bin/bash /opt/sceneroot/scripts/kiosk.sh|' "$HOME/.bash_profile" && ok "Lancement du kiosque rendu insensible aux droits"
+  else warn "~/.bash_profile lance kiosk.sh directement : un script non exécutable casse le kiosque (--fix corrige)"; fi
+else warn "Aucun lancement de kiosque dans ~/.bash_profile"; fi
 
 head_ "Affichage du kiosque"
 CMDLINE=/boot/firmware/cmdline.txt; [[ -f $CMDLINE ]] || CMDLINE=/boot/cmdline.txt

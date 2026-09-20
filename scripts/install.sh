@@ -208,7 +208,7 @@ if [[ -z "${WAYLAND_DISPLAY:-}" && "${XDG_VTNR:-}" == "1" ]]; then
   # Curseur réduit à un pixel : le compositeur le dessine avant que la page
   # puisse le masquer, et rien ne le déplace jamais sur un téléviseur.
   export XCURSOR_SIZE=1
-  while true; do cage -- /opt/sceneroot/scripts/kiosk.sh; echo "SceneRoot : kiosque arrêté, relance dans 3 s (Ctrl+C pour un shell)"; sleep 3; done
+  while true; do cage -- /bin/bash /opt/sceneroot/scripts/kiosk.sh; echo "SceneRoot : kiosque arrêté, relance dans 3 s (Ctrl+C pour un shell)"; sleep 3; done
 fi
 PROFILE
   fi
