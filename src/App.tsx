@@ -18,6 +18,7 @@ import { usePlayerChrome } from './hooks/usePlayerChrome';
 import { useResolvedMedia } from './hooks/useResolvedMedia';
 import { usePreferences } from './hooks/usePreferences';
 import { useOpinion } from './hooks/useOpinion';
+import { useRemoteUrl } from './hooks/useRemoteUrl';
 import { nextInDirection, type Direction } from './lib/spatial';
 import { useWatched } from './context/watched';
 import { useEscapeClose } from './hooks/useEscapeClose';
@@ -132,7 +133,31 @@ function SearchPage() {
   const results=catalog.items.filter(item=>matchesSearchFilters(item,{duration,minRating,quality}));
   useEffect(()=>{const node=sentinel.current;if(!node)return;const observer=new IntersectionObserver(entries=>{if(entries[0]?.isIntersecting&&!catalog.loading&&catalog.hasMore)void catalog.loadMore()},{rootMargin:'420px'});observer.observe(node);return()=>observer.disconnect()},[catalog.hasMore,catalog.loadMore,catalog.loading]);
   const reset=()=>{setQuery('');setSelectedGenre('');setType('all');setDuration('any');setMinRating(0);setQuality('')};
+  // Télécommande de recherche : le téléphone dépose une requête, l'écran la
+  // reprend. On ignore l'état déjà en place à l'arrivée sur la page.
+  const remoteUrl=useRemoteUrl('/remote.html');
+  const lastRemote=useRef<string>('');
+  useEffect(()=>{
+    let active=true;
+    const poll=async()=>{
+      try{
+        const response=await fetch('/api/remote/search');
+        if(!response.ok)return;
+        const remote=await response.json() as {query:string;kind:'all'|'film'|'serie';genre:string;duration:DurationBucket;minRating:number;quality:string;updatedAt:string};
+        if(!active)return;
+        if(!lastRemote.current){lastRemote.current=remote.updatedAt;return}
+        if(remote.updatedAt===lastRemote.current)return;
+        lastRemote.current=remote.updatedAt;
+        setQuery(remote.query);setSelectedGenre(remote.genre);setType(remote.kind);
+        setDuration(remote.duration);setMinRating(remote.minRating);setQuality(remote.quality as ''|MediaItem['quality']);
+      }catch{/* réseau indisponible : on réessaiera */}
+    };
+    void poll();
+    const timer=setInterval(()=>void poll(),2000);
+    return()=>{active=false;clearInterval(timer)};
+  },[]);
   return <><label className="searchbox"><Search/><input autoFocus value={query} onChange={e=>setQuery(e.target.value)} placeholder="Rechercher un film ou une série…"/><kbd>OK</kbd></label>
+    {remoteUrl&&<div className="search-remote"><QRCode value={remoteUrl} size={132}/><div><h3>Chercher depuis votre téléphone</h3><p>Scannez ce QR code pour saisir le texte et régler les filtres depuis le mobile : l’écran suit en direct.</p><small>{remoteUrl}</small></div></div>}
     <div className="search-filter-title"><h2>Filtres</h2><button onClick={reset}><RefreshCw/> Réinitialiser les filtres</button></div>
     <div className="search-filters"><div className="filter-panel"><h3><Film/>Type</h3><div>{([['all','Tous'],['film','Films'],['serie','Séries']] as const).map(([value,label])=><button className={type===value?'on':''} onClick={()=>setType(value)} key={value}>{label}</button>)}</div></div><div className="filter-panel"><h3><Timer/>Durée</h3><div>{([['short','< 1h30'],['medium','1h30 – 2h'],['long','> 2h']] as const).map(([value,label])=><button className={duration===value?'on':''} onClick={()=>setDuration(current=>current===value?'any':value)} key={value}>{label}</button>)}</div></div><div className="filter-panel"><h3><Star/>Notes utilisateurs</h3><div>{[5,7,8].map(value=><button className={minRating===value?'on':''} onClick={()=>setMinRating(current=>current===value?0:value)} key={value}>≥ {value}</button>)}</div></div><div className="filter-panel"><h3><Monitor/>Qualité</h3><div>{(['720p','1080p','4K'] as const).map(value=><button className={quality===value?'on':''} onClick={()=>setQuality(current=>current===value?'':value)} key={value}>{value}</button>)}</div></div></div>
     <div className="genre-filter"><h3><Sparkles/>Tous les genres</h3><div>{allGenres.map(genre=><button className={selectedGenre===genre?'on':''} onClick={()=>setSelectedGenre(current=>current===genre?'':genre)} key={genre}>{genre}</button>)}</div></div>

@@ -626,3 +626,7 @@ body.hide-cursor, body.hide-cursor * { cursor: none !important; }
 .opinion-star:focus-visible { outline: 2px solid var(--cyan); border-radius: 8px; }
 .opinion-score { color: var(--muted); font-size: 14px; }
 .opinion-error { color: #ff8a95; font-size: 14px; }
+.search-remote { display: flex; align-items: center; gap: 20px; margin: 18px 0 8px; padding: 16px 20px; background: rgba(8,24,39,.72); border: 1px solid #1d3a55; border-radius: 16px; }
+.search-remote h3 { margin: 0 0 6px; font-size: 19px; }
+.search-remote p { margin: 0 0 6px; color: var(--muted); line-height: 1.45; }
+.search-remote small { color: #6f89a6; word-break: break-all; }

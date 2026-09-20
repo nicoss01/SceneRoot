@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#04121f" />
+<title>SceneRoot · Recherche</title>
+<style>
+  :root { --bg:#04121f; --panel:#0a1e31; --panel2:#081827; --border:#23405c; --cyan:#22d3ee; --text:#e6f0fa; --muted:#8fa6c0; --danger:#ff8a95; --ok:#39e58e; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; -webkit-text-size-adjust:100%; }
+  header { position:sticky; top:0; z-index:5; padding:16px; background:linear-gradient(180deg,#052033,#04121fee); border-bottom:1px solid var(--border); backdrop-filter:blur(6px); }
+  header h1 { margin:0; font-size:18px; letter-spacing:.5px; }
+  header h1 b { color:var(--cyan); }
+  header p { margin:4px 0 0; color:var(--muted); font-size:12px; }
+  main { padding:16px 16px 96px; max-width:640px; margin:0 auto; display:flex; flex-direction:column; gap:16px; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:16px; }
+  .card h2 { margin:0 0 12px; font-size:15px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
+  input, select { width:100%; padding:14px; font-size:16px; color:var(--text); background:var(--panel2); border:1px solid var(--border); border-radius:10px; }
+  input:focus, select:focus { outline:none; border-color:var(--cyan); }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .chip { flex:0 0 auto; padding:10px 14px; border-radius:999px; border:1px solid var(--border); background:var(--panel2); color:var(--text); font-size:14px; }
+  .chip.on { border-color:var(--cyan); color:var(--cyan); }
+  .muted { color:var(--muted); font-size:12px; }
+  .submit { position:fixed; left:0; right:0; bottom:0; padding:12px 16px calc(12px + env(safe-area-inset-bottom)); background:#04121fee; border-top:1px solid var(--border); backdrop-filter:blur(6px); }
+  .submit button { width:100%; padding:16px; font-size:16px; font-weight:600; color:#03151f; background:var(--cyan); border:1px solid var(--cyan); border-radius:12px; }
+  .submit button:disabled { opacity:.5; }
+  .toast { position:fixed; left:50%; bottom:84px; transform:translateX(-50%); padding:12px 18px; border-radius:10px; font-size:14px; z-index:10; max-width:90%; }
+  .toast.ok { background:#0c3b2b; color:var(--ok); border:1px solid var(--ok); }
+  .toast.err { background:#3b141a; color:var(--danger); border:1px solid #733a43; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Scene<b>Root</b> · Recherche</h1>
+  <p>Pilotez la recherche affichée sur le téléviseur</p>
+</header>
+<main>
+  <section class="card">
+    <h2>🔎 Recherche</h2>
+    <input id="query" placeholder="Titre d'un film ou d'une série…" autocomplete="off" enterkeyhint="search" />
+    <label for="genre">Genre</label>
+    <select id="genre"><option value="">Tous les genres</option></select>
+  </section>
+
+  <section class="card">
+    <h2>🎛️ Filtres</h2>
+    <label>Type</label>
+    <div class="chips" id="kind"></div>
+    <label>Durée</label>
+    <div class="chips" id="duration"></div>
+    <label>Qualité</label>
+    <div class="chips" id="quality"></div>
+    <label for="rating">Note minimale : <b id="ratingVal">0</b>/10</label>
+    <input id="rating" type="range" min="0" max="10" step="1" value="0" />
+  </section>
+  <p class="muted">Le téléviseur applique la recherche en une seconde ou deux. Laissez cette page ouverte pour enchaîner les essais.</p>
+</main>
+<div class="submit"><button id="send">Lancer la recherche sur la TV</button></div>
+<div id="toast" class="toast" style="display:none"></div>
+
+<script>
+(function(){
+  var state={ query:'', kind:'all', genre:'', duration:'any', minRating:0, quality:'' };
+  var KINDS=[['all','Tous'],['film','Films'],['serie','Séries']];
+  var DURATIONS=[['any','Peu importe'],['short','Moins d\'1h30'],['medium','1h30 à 2h'],['long','Plus de 2h']];
+  var QUALITIES=[['','Toutes'],['720p','720p'],['1080p','1080p'],['2160p','4K']];
+
+  function toast(message,ok){ var el=document.getElementById('toast'); el.textContent=message; el.className='toast '+(ok?'ok':'err'); el.style.display='block'; clearTimeout(el._t); el._t=setTimeout(function(){ el.style.display='none'; },2400); }
+  function chips(hostId,entries,key){
+    var host=document.getElementById(hostId);
+    host.innerHTML='';
+    entries.forEach(function(entry){
+      var button=document.createElement('button');
+      button.type='button'; button.className='chip'+(state[key]===entry[0]?' on':''); button.textContent=entry[1];
+      button.onclick=function(){ state[key]=entry[0]; chips(hostId,entries,key); send(); };
+      host.appendChild(button);
+    });
+  }
+  async function send(){
+    var button=document.getElementById('send');
+    state.query=document.getElementById('query').value.trim();
+    state.genre=document.getElementById('genre').value;
+    state.minRating=Number(document.getElementById('rating').value);
+    button.disabled=true;
+    try{
+      var response=await fetch('/api/remote/search',{ method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(state) });
+      if(!response.ok) throw new Error('Le téléviseur n\'a pas répondu ('+response.status+')');
+      toast('Recherche envoyée',true);
+    }catch(e){ toast(e.message,false); }
+    finally{ button.disabled=false; }
+  }
+
+  // Les genres viennent du serveur : la liste reste celle du téléviseur.
+  fetch('/api/genres').then(function(r){ return r.ok?r.json():[]; }).then(function(list){
+    var select=document.getElementById('genre');
+    list.forEach(function(genre){ var option=document.createElement('option'); option.value=genre; option.textContent=genre; select.appendChild(option); });
+    select.value=state.genre;
+  }).catch(function(){});
+
+  // On reprend l'état courant pour que la page reflète ce qui est affiché.
+  fetch('/api/remote/search').then(function(r){ return r.ok?r.json():null; }).then(function(current){
+    if(!current) return;
+    state.kind=current.kind; state.genre=current.genre; state.duration=current.duration; state.quality=current.quality; state.minRating=current.minRating;
+    document.getElementById('query').value=current.query||'';
+    document.getElementById('rating').value=String(current.minRating||0);
+    document.getElementById('ratingVal').textContent=String(current.minRating||0);
+    document.getElementById('genre').value=current.genre||'';
+    chips('kind',KINDS,'kind'); chips('duration',DURATIONS,'duration'); chips('quality',QUALITIES,'quality');
+  }).catch(function(){});
+
+  chips('kind',KINDS,'kind'); chips('duration',DURATIONS,'duration'); chips('quality',QUALITIES,'quality');
+  document.getElementById('rating').addEventListener('input',function(){ document.getElementById('ratingVal').textContent=this.value; });
+  document.getElementById('rating').addEventListener('change',send);
+  document.getElementById('genre').addEventListener('change',send);
+  document.getElementById('query').addEventListener('keydown',function(event){ if(event.key==='Enter'){ event.preventDefault(); this.blur(); send(); } });
+  document.getElementById('send').addEventListener('click',send);
+})();
+</script>
+</body>
+</html>

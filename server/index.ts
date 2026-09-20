@@ -17,6 +17,7 @@ import { createStore, type StoredDb } from './lib/store.js';
 import { bearerToken, isAdminAuthorized, isLoopback, isPrivateAddress, requiresAdmin } from './lib/auth.js';
 import { maskSource, normalizeTorznabUrl, sanitizeSource, type TorznabSource } from './lib/sources.js';
 import { computeStats } from './lib/stats.js';
+import { catalogGenres } from './lib/genres.js';
 import { CatalogStore, type CatalogRow, type CatalogSyncState } from './lib/catalogStore.js';
 import { syncImdbCatalog } from './lib/imdbSync.js';
 
@@ -217,6 +218,28 @@ app.get('/api/admin-token',async(request,reply)=>{if(!isPrivateAddress(request.i
 app.post<{Body:{token?:string}}>('/api/admin-token',async(request,reply)=>{if(!isPrivateAddress(request.ip)&&!isLoopback(request.ip))return reply.code(403).send({error:'Réservé au réseau local'});if(process.env.SCENEROOT_ADMIN_TOKEN)return reply.code(409).send({error:'Jeton défini par l’environnement (SCENEROOT_ADMIN_TOKEN)'});const db=loadDb();const token=(request.body?.token?.trim())||randomBytes(18).toString('base64').replace(/[^A-Za-z0-9]/g,'').slice(0,24);db.settings.adminToken=token;saveDb(db);return{token}});
 function lanAddresses(){const out:string[]=[];for(const entries of Object.values(networkInterfaces()))for(const entry of entries??[])if(entry.family==='IPv4'&&!entry.internal)out.push(entry.address);return out}
 app.get('/api/health', async () => ({ ok:true, version:'0.1.0', mediaRoots, port, addresses:lanAddresses(), storage:store.backend }));
+app.get('/api/genres',async()=>catalogGenres);
+/**
+ * Recherche pilotée depuis un téléphone : le mobile dépose ici la requête et
+ * les filtres, l'écran de recherche du téléviseur les applique. L'état vit en
+ * mémoire — il n'a aucun intérêt après un redémarrage.
+ */
+type RemoteSearch={query:string;kind:'all'|'film'|'serie';genre:string;duration:'any'|'short'|'medium'|'long';minRating:number;quality:string;updatedAt:string};
+let remoteSearch:RemoteSearch={query:'',kind:'all',genre:'',duration:'any',minRating:0,quality:'',updatedAt:new Date(0).toISOString()};
+app.get('/api/remote/search',async()=>remoteSearch);
+app.put<{Body:Partial<RemoteSearch>}>('/api/remote/search',{schema:{body:{type:'object',properties:{query:{type:'string',maxLength:120},kind:{type:'string',enum:['all','film','serie']},genre:{type:'string',maxLength:60},duration:{type:'string',enum:['any','short','medium','long']},minRating:{type:'number',minimum:0,maximum:10},quality:{type:'string',maxLength:10}}}}},async request=>{
+  const body=request.body;
+  remoteSearch={
+    query:typeof body.query==='string'?body.query.slice(0,120):remoteSearch.query,
+    kind:body.kind??remoteSearch.kind,
+    genre:typeof body.genre==='string'?body.genre:remoteSearch.genre,
+    duration:body.duration??remoteSearch.duration,
+    minRating:typeof body.minRating==='number'?body.minRating:remoteSearch.minRating,
+    quality:typeof body.quality==='string'?body.quality:remoteSearch.quality,
+    updatedAt:new Date().toISOString(),
+  };
+  return remoteSearch;
+});
 app.get('/api/profiles',async()=>loadDb().profiles.map(({pinHash,...profile})=>({...profile,locked:Boolean(pinHash)})));
 app.post<{Body:{name:string;ageLimit:number;avatar?:string;accent?:string;pin?:string}}>('/api/profiles',{schema:{body:{type:'object',required:['name'],properties:{name:{type:'string',minLength:1,maxLength:40},ageLimit:{type:'number'},avatar:{type:'string'},accent:{type:'string'},pin:{type:'string',pattern:'^[0-9]{0,8}$'}}}}},async(request,reply)=>{const name=request.body.name?.trim();if(!name)return reply.code(400).send({error:'Le nom est obligatoire'});const db=loadDb();const profile:ProfileRecord={id:randomUUID(),name,ageLimit:Math.max(0,Math.min(18,Number(request.body.ageLimit??18))),avatar:safeAvatar(request.body.avatar,name[0].toUpperCase()),accent:safeAccent(request.body.accent),createdAt:new Date().toISOString(),pinHash:request.body.pin?hashPin(request.body.pin):undefined};db.profiles.push(profile);saveDb(db);const{pinHash,...safe}=profile;return reply.code(201).send({...safe,locked:Boolean(pinHash)})});
 app.put<{Params:{id:string};Body:{name:string;ageLimit:number;avatar?:string;accent?:string;pin?:string|null}}>('/api/profiles/:id',async(request,reply)=>{const name=request.body.name?.trim();if(!name)return reply.code(400).send({error:'Le nom est obligatoire'});const db=loadDb();let profile=db.profiles.find(item=>item.id===request.params.id);if(!profile){profile={id:request.params.id,name,ageLimit:18,avatar:name[0].toUpperCase(),accent:'#22d3ee',createdAt:new Date().toISOString()};db.profiles.push(profile)}profile.name=name;profile.ageLimit=Math.max(0,Math.min(18,Number(request.body.ageLimit??profile.ageLimit)));profile.avatar=safeAvatar(request.body.avatar,profile.avatar||name[0].toUpperCase());profile.accent=safeAccent(request.body.accent??profile.accent);if(request.body.pin===null||request.body.pin==='')delete profile.pinHash;else if(request.body.pin!==undefined)profile.pinHash=hashPin(request.body.pin);saveDb(db);const{pinHash,...safe}=profile;return{...safe,locked:Boolean(pinHash)}});
