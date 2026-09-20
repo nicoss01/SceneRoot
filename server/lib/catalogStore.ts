@@ -1,3 +1,4 @@
+import { statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 
@@ -98,14 +99,25 @@ function rowFromSql(raw: Record<string, unknown>): CatalogRow {
 
 export class CatalogStore {
   readonly available: boolean;
+  readonly file: string;
   private db?: SqliteDb;
 
+  /** Taille occupée sur le disque, journal d'écriture compris. */
+  sizeBytes(): number {
+    let bytes = 0;
+    for (const suffix of ['', '-wal', '-shm']) {
+      try { bytes += statSync(`${this.file}${suffix}`).size } catch { /* fichier absent */ }
+    }
+    return bytes;
+  }
+
   constructor(dataDir: string) {
+    this.file = join(dataDir, 'sceneroot.db');
     let DatabaseSync: (new (path: string) => SqliteDb) | undefined;
     try { ({ DatabaseSync } = createRequire(import.meta.url)('node:sqlite')); } catch { /* Node ancien : catalogue distant conservé */ }
     this.available = Boolean(DatabaseSync);
     if (!DatabaseSync) return;
-    this.db = new DatabaseSync(join(dataDir, 'sceneroot.db'));
+    this.db = new DatabaseSync(this.file);
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS catalog_titles(

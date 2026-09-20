@@ -17,7 +17,7 @@ import { createStore, type StoredDb } from './lib/store.js';
 import { bearerToken, isAdminAuthorized, isLoopback, isPrivateAddress, requiresAdmin } from './lib/auth.js';
 import { maskSource, normalizeTorznabUrl, sanitizeSource, type TorznabSource } from './lib/sources.js';
 import { computeStats } from './lib/stats.js';
-import { CatalogStore, type CatalogRow } from './lib/catalogStore.js';
+import { CatalogStore, type CatalogRow, type CatalogSyncState } from './lib/catalogStore.js';
 import { syncImdbCatalog } from './lib/imdbSync.js';
 
 type Rating = { profileId: string; mediaId: string; score: number; tags: string[]; at: string };
@@ -224,9 +224,23 @@ app.get<{Querystring:{kind?:'film'|'serie';page?:string;limit?:string;genre?:str
 app.get<{Querystring:{q:string;kind?:'film'|'serie';year?:string}}>('/api/metadata/search',async(request,reply)=>{if(!request.query.q)return reply.code(400).send({error:'Recherche manquante'});try{const result=await searchMetadata(request.query.q,request.query.kind??'film',request.query.year);reply.header('X-SceneRoot-Cache',result.state);return result.items}catch(error){app.log.warn({error},'Metadata search failed');return reply.code(502).send({error:'Source de métadonnées indisponible'})}});
 app.put<{Params:{id:string};Body:{provider?:MediaMetadata['provider'];providerId:number|string}}>('/api/library/:id/match',async(request,reply)=>{const db=loadDb();const item=db.library.find(x=>x.id===request.params.id);if(!item)return reply.code(404).send({error:'Média introuvable'});try{const result=await fetchMetadata(request.body.provider??'tmdb',request.body.providerId,item.kind);const originalTitle=item.title;const originalYear=item.year;for(const sibling of db.library.filter(entry=>entry.kind===item.kind&&entry.year===originalYear&&comparableTitle(entry.title)===comparableTitle(originalTitle))){sibling.metadata=result.metadata;sibling.title=result.metadata.title}saveDb(db);reply.header('X-SceneRoot-Cache',result.state);return result.metadata}catch(error){app.log.warn({error},'Metadata match failed');return reply.code(502).send({error:'Correspondance indisponible'})}});
 let imdbSyncPromise:Promise<void>|null=null;
+/** Synchronisation automatique du catalogue : une fois par jour par défaut. */
+const catalogSyncIntervalMs=Math.max(1,Number(process.env.SCENEROOT_CATALOG_SYNC_DAYS??1))*24*60*60*1000;
+// L'import IMDb traverse quatre étapes de tailles inconnues à l'avance : la
+// progression se lit donc à l'étape en cours, complétée par le nombre de lignes.
+const catalogPhases=['Téléchargement des titres','Import des titres','Import des notes','Import des saisons et épisodes'];
+function catalogProgress(state?:CatalogSyncState){
+  if(!state)return undefined;
+  const steps=catalogPhases.length;
+  if(state.status==='complete')return{step:steps,steps,ratio:1};
+  const index=catalogPhases.indexOf(state.phase);
+  return{step:Math.max(0,index),steps,ratio:index<0?0:index/steps};
+}
+function lastCatalogSync(){return catalogStore.syncStates().find(state=>state.source==='imdb'&&state.status==='complete')?.completedAt}
+function nextCatalogSync(){if(!loadDb().settings.catalogSyncEnabled)return undefined;const last=lastCatalogSync();return new Date(last?Date.parse(last)+catalogSyncIntervalMs:Date.now()).toISOString()}
 function hasCatalogSyncSpace(){try{const disk=statfsSync(dataDir);return disk.bavail*disk.bsize>=Math.max(1,Number(process.env.SCENEROOT_CATALOG_MIN_FREE_GB??4))*1024**3}catch{return true}}
 function startImdbSync(){if(imdbSyncPromise)return imdbSyncPromise;if(!hasCatalogSyncSpace()){const message='Espace insuffisant pour importer les jeux de données IMDb.';catalogStore.setSync({source:'imdb',status:'error',phase:'Synchronisation bloquée',processed:0,error:message});app.log.warn(message);return Promise.resolve()}imdbSyncPromise=syncImdbCatalog(catalogStore,{onProgress:progress=>app.log.info(progress,'IMDb catalogue synchronization')}).catch(error=>{app.log.error({error},'IMDb catalogue synchronization failed')}).finally(()=>{imdbSyncPromise=null});return imdbSyncPromise}
-app.get('/api/catalog/status',async()=>({available:catalogStore.available,total:catalogStore.count(),syncing:Boolean(imdbSyncPromise),sources:catalogStore.syncStates(),tmdb:{configured:Boolean(tmdbApiKey()),source:tmdbConfiguredByEnvironment?'environment':tmdbApiKey()?'settings':'none'},architecture:{titles:'IMDb Datasets',frenchMetadata:'TMDB',episodes:'TMDB + TVmaze',identifiers:'Wikidata',fallback:'Wikipédia'}}));
+app.get('/api/catalog/status',async()=>({available:catalogStore.available,total:catalogStore.count(),syncing:Boolean(imdbSyncPromise),sources:catalogStore.syncStates(),progress:catalogProgress(catalogStore.syncStates().find(state=>state.source==='imdb')),databaseBytes:catalogStore.sizeBytes(),lastSyncAt:lastCatalogSync(),nextSyncAt:nextCatalogSync(),intervalHours:catalogSyncIntervalMs/3_600_000,tmdb:{configured:Boolean(tmdbApiKey()),source:tmdbConfiguredByEnvironment?'environment':tmdbApiKey()?'settings':'none'},architecture:{titles:'IMDb Datasets',frenchMetadata:'TMDB',episodes:'TMDB + TVmaze',identifiers:'Wikidata',fallback:'Wikipédia'}}));
 app.post('/api/catalog/sync',async(_request,reply)=>{if(!catalogStore.available)return reply.code(503).send({error:'SQLite nécessite Node.js 22.5 ou supérieur'});if(!hasCatalogSyncSpace())return reply.code(507).send({error:'Au moins 4 Go libres sont requis pour synchroniser le catalogue IMDb.'});void startImdbSync();return reply.code(202).send({ok:true,status:'running'})});
 
 async function enrichCatalogSeason(parent:CatalogRow,seasonNumber:number){
@@ -495,7 +509,9 @@ setInterval(()=>{try{purgeExpiredGuests()}catch(error){app.log.warn({error},'Gue
 function warmRecentCatalog(){void catalogFor('film',1,12,true).catch(()=>{});void catalogFor('serie',1,12,true).catch(()=>{})}
 warmRecentCatalog();
 setInterval(warmRecentCatalog,24*60*60*1000).unref();
-function scheduleImdbCatalog(){const settings=loadDb().settings;if(!settings.catalogSyncEnabled)return;const last=catalogStore.syncStates().find(state=>state.source==='imdb'&&state.status==='complete')?.completedAt;const maxAge=Math.max(1,Number(process.env.SCENEROOT_CATALOG_SYNC_DAYS??7))*24*60*60*1000;if(!last||Date.now()-Date.parse(last)>maxAge)void startImdbSync()}
+function scheduleImdbCatalog(){const settings=loadDb().settings;if(!settings.catalogSyncEnabled)return;const last=lastCatalogSync();if(!last||Date.now()-Date.parse(last)>catalogSyncIntervalMs)void startImdbSync()}
 scheduleImdbCatalog();
-setInterval(scheduleImdbCatalog,6*60*60*1000).unref();
+// Vérification horaire : la synchronisation part dès que les 24 h sont écoulées,
+// même si le Raspberry Pi était éteint au moment prévu.
+setInterval(scheduleImdbCatalog,60*60*1000).unref();
 if(process.env.SCENEROOT_WATCH!=='false'){scanLibrary().catch(error=>app.log.warn({error},'Initial media scan failed'));setInterval(()=>scanLibrary().catch(error=>app.log.warn({error},'Background media scan failed')),60_000).unref()}
