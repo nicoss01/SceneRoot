@@ -312,7 +312,14 @@ function hasCatalogSyncSpace(){try{const disk=statfsSync(dataDir);return disk.ba
 function startImdbSync(){if(imdbSyncPromise)return imdbSyncPromise;if(!hasCatalogSyncSpace()){const message='Espace insuffisant pour importer les jeux de données IMDb.';catalogStore.setSync({source:'imdb',status:'error',phase:'Synchronisation bloquée',processed:0,error:message});app.log.warn(message);return Promise.resolve()}imdbSyncStop=new AbortController();imdbSyncPromise=syncImdbCatalog(catalogStore,{signal:imdbSyncStop.signal,onProgress:progress=>app.log.info(progress,'IMDb catalogue synchronization')}).then(()=>{app.log.info('Mise à jour des statistiques SQLite');catalogStore.analyze();const indexed=catalogStore.rebuildSearchIndex();app.log.info({indexed},'Index de recherche reconstruit')}).catch(error=>{app.log.error({error},'IMDb catalogue synchronization failed')}).finally(()=>{imdbSyncPromise=null});return imdbSyncPromise}
 app.get('/api/catalog/status',async()=>({available:catalogStore.available,total:catalogStore.count(),syncing:Boolean(imdbSyncPromise),sources:catalogSources(),progress:catalogProgress(catalogSources().find(state=>state.source==='imdb')),databaseBytes:catalogStore.sizeBytes(),lastSyncAt:lastCatalogSync(),nextSyncAt:nextCatalogSync(),intervalHours:catalogSyncIntervalMs/3_600_000,tmdb:{configured:Boolean(tmdbApiKey()),source:tmdbConfiguredByEnvironment?'environment':tmdbApiKey()?'settings':'none'},architecture:{titles:'IMDb Datasets',frenchMetadata:'TMDB',episodes:'TMDB + TVmaze',identifiers:'Wikidata',fallback:'Wikipédia'}}));
 app.post('/api/catalog/sync/stop',async(_request,reply)=>{
-  if(!imdbSyncPromise)return reply.code(409).send({error:'Aucune synchronisation en cours'});
+  const state=catalogStore.syncStates().find(entry=>entry.source==='imdb');
+  if(!imdbSyncPromise){
+    // Rien ne tourne : si l'état prétend le contraire (serveur redémarré en
+    // plein import), on le remet au repos plutôt que de refuser l'arrêt.
+    if(state?.status!=='running')return reply.code(409).send({error:'Aucune synchronisation en cours'});
+    catalogStore.setSync({...state,status:'idle',phase:'Synchronisation arrêtée',completedAt:new Date().toISOString(),error:undefined});
+    return{ok:true,status:'stopped'};
+  }
   imdbSyncStop?.abort();
   return{ok:true,status:'stopping'};
 });

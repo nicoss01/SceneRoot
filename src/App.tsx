@@ -126,11 +126,15 @@ function LibraryPage() {
     {matching&&<MetadataMatcher group={matching} onClose={()=>setMatchingId(null)} onMatched={library.refresh}/>}</>;
 }
 
+/** Dernière recherche, mémorisée pour ce navigateur seulement. */
+const LAST_SEARCH_KEY='sceneroot-last-search';
 function SearchPage() {
   const params=new URLSearchParams(location.search);const initialGenre=params.get('genre')??'';
-  const [query, setQuery] = useState(initialGenre?'':'planète'); const [debouncedQuery,setDebouncedQuery]=useState(query);const [selectedGenre,setSelectedGenre]=useState(initialGenre);const[type,setType]=useState<'all'|'film'|'serie'>('all'); const navigate = useNavigate();const sentinel=useRef<HTMLDivElement>(null);
+  // La page s'ouvrait sur un exemple codé en dur : on reprend plutôt la
+  // dernière recherche de l'utilisateur, et rien du tout la première fois.
+  const [query, setQuery] = useState(()=>{ if(initialGenre)return ''; try{ return localStorage.getItem(LAST_SEARCH_KEY)??'' }catch{ return '' } }); const [debouncedQuery,setDebouncedQuery]=useState(query);const [selectedGenre,setSelectedGenre]=useState(initialGenre);const[type,setType]=useState<'all'|'film'|'serie'>('all'); const navigate = useNavigate();const sentinel=useRef<HTMLDivElement>(null);
   const [duration,setDuration]=useState<DurationBucket>('any');const [minRating,setMinRating]=useState(0);const [quality,setQuality]=useState<''|MediaItem['quality']>('');
-  useEffect(()=>{const timer=setTimeout(()=>setDebouncedQuery(query.trim()),320);return()=>clearTimeout(timer)},[query]);
+  useEffect(()=>{const timer=setTimeout(()=>{const clean=query.trim();setDebouncedQuery(clean);try{localStorage.setItem(LAST_SEARCH_KEY,clean)}catch{/* stockage indisponible */}},320);return()=>clearTimeout(timer)},[query]);
   const catalog=useCatalog(type==='all'?undefined:type,20,true,selectedGenre,debouncedQuery);
   const results=catalog.items.filter(item=>matchesSearchFilters(item,{duration,minRating,quality}));
   useEffect(()=>{const node=sentinel.current;if(!node)return;const observer=new IntersectionObserver(entries=>{if(entries[0]?.isIntersecting&&!catalog.loading&&catalog.hasMore)void catalog.loadMore()},{rootMargin:'420px'});observer.observe(node);return()=>observer.disconnect()},[catalog.hasMore,catalog.loadMore,catalog.loading]);
@@ -529,7 +533,18 @@ function App() {
   const [profilesLoaded,setProfilesLoaded]=useState(false);
   const [setupComplete,setSetupComplete]=useState<boolean|null>(null);
   const [profile,setProfile]=useState<Profile|null>(()=>{try{const stored=JSON.parse(localStorage.getItem('sceneroot-profile')||'null') as Profile|null;if(stored&&['nicolas','cathy','nathan','lucie'].includes(stored.id)){localStorage.removeItem('sceneroot-profile');return null}return stored}catch{return null}});
-  const refetchProfiles=useCallback(()=>fetch('/api/profiles').then(response=>response.ok?response.json():[]).then((items:Profile[])=>setSavedProfiles(items)).catch(()=>setSavedProfiles([])).finally(()=>setProfilesLoaded(true)),[]);
+  // Une réponse manquée ne doit jamais vider la liste : le serveur peut être
+  // occupé (import du catalogue, remise à zéro) et l'écran basculerait alors
+  // sur l'assistant de première utilisation, profil actif compris.
+  const refetchProfiles=useCallback(async()=>{
+    try{
+      const response=await fetch('/api/profiles');
+      if(!response.ok)throw new Error(`HTTP ${response.status}`);
+      const items=await response.json() as Profile[];
+      setSavedProfiles(items);
+    }catch{/* liste conservée telle quelle */}
+    finally{setProfilesLoaded(true)}
+  },[]);
   useEffect(()=>{const timer=setTimeout(()=>setBooting(false),1450);return()=>clearTimeout(timer)},[]);
   useEffect(()=>{void refetchProfiles()},[refetchProfiles]);
   // Les profils se modifient aussi depuis le panneau mobile : on les relit
@@ -544,7 +559,7 @@ function App() {
   // Le profil actif est mémorisé localement : on le réaligne sur le serveur
   // (nom, avatar, limite d'âge) et on le libère s'il a été supprimé.
   useEffect(()=>{
-    if(!profilesLoaded||!profile)return;
+    if(!profilesLoaded||!profile||!savedProfiles.length)return;
     const fresh=savedProfiles.find(entry=>entry.id===profile.id);
     if(!fresh){localStorage.removeItem('sceneroot-profile');setProfile(null);return}
     if(JSON.stringify(fresh)===JSON.stringify(profile))return;

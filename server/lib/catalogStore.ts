@@ -263,6 +263,9 @@ export class CatalogStore {
     this.db.exec('DROP TABLE IF EXISTS catalog_titles; DROP TABLE IF EXISTS catalog_episodes; DROP TABLE IF EXISTS catalog_localized; DROP TABLE IF EXISTS catalog_sync; DROP TABLE IF EXISTS catalog_search;');
     this.migrate();
     try { this.db.exec('VACUUM') } catch { /* compactage facultatif */ }
+    // Sans cette troncature, le journal d'écriture garde la taille de l'ancien
+    // catalogue et les réglages annoncent un espace occupé qui n'existe plus.
+    try { this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)') } catch { /* journal déjà vide */ }
   }
 
   /**
