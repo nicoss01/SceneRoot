@@ -67,18 +67,37 @@ function kioskDisplayEnv():Record<string,string>{
   }catch{/* pas de session Wayland : on retombe sur X ou DRM */}
   return{};
 }
-/** Télécommande HDMI-CEC : OK met en pause, les flèches déplacent, Retour quitte. */
+/**
+ * Télécommande HDMI-CEC. Chaque action réaffiche la barre de lecture de mpv
+ * (« show-progress »), qui s'efface seule au bout de --osd-duration.
+ */
 const mpvInputConf=join(dataDir,'mpv-input.conf');
 function writeMpvInput(){
-  try{writeFileSync(mpvInputConf,['# Généré par SceneRoot — ne pas modifier','ENTER cycle pause','KP_ENTER cycle pause','PLAYPAUSE cycle pause','PLAY cycle pause','PAUSE cycle pause','SPACE cycle pause','RIGHT seek 10','LEFT seek -10','UP seek 60','DOWN seek -60','ESC quit','BS quit','STOP quit',''].join('\n'))}
+  const bindings=[
+    '# Généré par SceneRoot — ne pas modifier',
+    'ENTER cycle pause; show-progress','KP_ENTER cycle pause; show-progress','SPACE cycle pause; show-progress',
+    'PLAYPAUSE cycle pause; show-progress','PLAY set pause no; show-progress','PAUSE set pause yes; show-progress',
+    'RIGHT seek 10; show-progress','LEFT seek -10; show-progress',
+    'UP show-progress','DOWN show-progress',
+    'ESC quit','BS quit','STOP quit','',
+  ];
+  try{writeFileSync(mpvInputConf,bindings.join('\n'))}
   catch(error){app.log.warn({error},'mpv input configuration could not be written')}
 }
 function spawnMpv(path:string,start:number){
   mpvProcess?.kill();
-  const args=['--fs','--hwdec=auto-safe','--audio-display=no','--keep-open=no','--no-terminal',`--input-conf=${mpvInputConf}`,`--input-ipc-server=${mpvSocket}`];
+  // Sous un compositeur, le décodage matériel « direct » publie l'image sur un
+  // plan que Cage ne compose pas : l'écran reste bleu alors que le son tourne.
+  // La variante « copy » ramène les images vers la sortie vidéo.
+  const hwdec=process.env.SCENEROOT_MPV_HWDEC??'auto-copy-safe';
+  const args=[`--vo=${process.env.SCENEROOT_MPV_VO??'gpu'}`,`--hwdec=${hwdec}`,'--fs','--audio-display=no','--keep-open=no','--no-terminal',
+    '--osd-duration=5000','--osd-bar=yes',
+    `--input-conf=${mpvInputConf}`,`--input-ipc-server=${mpvSocket}`];
   if(start>0)args.push(`--start=${Math.floor(start)}`);
   args.push(path);
-  mpvProcess=spawn('mpv',args,{stdio:'ignore',env:{...process.env,DISPLAY:process.env.DISPLAY??':0',...kioskDisplayEnv()}});
+  mpvProcess=spawn('mpv',args,{stdio:['ignore','ignore','pipe'],env:{...process.env,DISPLAY:process.env.DISPLAY??':0',...kioskDisplayEnv()}});
+  // Les erreurs de sortie vidéo ne sont visibles que là : on les journalise.
+  mpvProcess.stderr?.on('data',chunk=>app.log.warn({mpv:String(chunk).trim().slice(0,400)},'mpv'));
   mpvProcess.on('exit',()=>{mpvProcess=null});
   mpvProcess.on('error',error=>app.log.warn({error},'mpv failed'));
 }
