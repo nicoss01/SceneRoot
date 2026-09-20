@@ -8,8 +8,11 @@ import type { MediaItem } from '../types';
 type SourceResult = { source: string; title: string; link?: string; size: number; seeders: number; published?: string };
 type RankedResult = SourceResult & { id: string; quality: string; languages: string[]; hdr: boolean; codec?: string; compatibilityScore: number };
 
+const MAX_RESULTS = 6;
+
 export function DownloadPanel({ item, onClose, priority = false, onQueued }: { item: MediaItem; onClose: () => void; priority?: boolean; onQueued?: (torrentId?: number) => void }) {
   const [results, setResults] = useState<RankedResult[]>([]);
+  const [totalFound, setTotalFound] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [launching, setLaunching] = useState<string | null>(null);
@@ -35,14 +38,16 @@ export function DownloadPanel({ item, onClose, priority = false, onQueued }: { i
         if (!response.ok) throw new Error(`Recherche indisponible (${response.status})`);
         try { const raw = response.headers.get('X-SceneRoot-Sources'); if (raw && active) setDiagnostics(JSON.parse(raw)); } catch { /* diagnostic facultatif */ }
         const rows = await response.json() as SourceResult[];
-        if (!rows.length) { if (active) { setResults([]); setLoading(false); } return; }
+        if (!rows.length) { if (active) { setResults([]); setTotalFound(0); setLoading(false); } return; }
         const candidates = rows.map((row, index) => ({ ...row, id: `dl-${index}`, ...parseRelease(row.title) }));
         const ranked = await fetch('/api/downloads/rank', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ kind: item.kind, preferredQuality: '1080p', preferredLanguages: ['multi', 'truefrench', 'vff', 'french'], preferHdr: false, candidates }),
         });
         const scored = ranked.ok ? await ranked.json() as RankedResult[] : candidates.map(c => ({ ...c, compatibilityScore: 0 }));
-        if (active) { setResults(scored); setLoading(false); }
+        // Six propositions au maximum : au-delà, la liste dépasse l'écran TV et
+        // les boutons du bas deviennent inatteignables à la télécommande.
+        if (active) { setResults(scored.slice(0, MAX_RESULTS)); setTotalFound(scored.length); setLoading(false); }
       } catch (cause) { if (active) { setError((cause as Error).message); setLoading(false); } }
     })();
     return () => { active = false; };
@@ -91,6 +96,8 @@ export function DownloadPanel({ item, onClose, priority = false, onQueued }: { i
           {!entry.error && entry.status >= 400 && <em> (URL ou clé API incorrecte)</em>}
         </div>)}</div>}
       </div>}
+      {launchError && <div className="profile-error">{launchError}</div>}
+      {results.length > 0 && <p className="download-legal">{totalFound > results.length ? `Les ${results.length} meilleures versions sur ${totalFound} trouvées.` : `${results.length} version${results.length > 1 ? 's' : ''} trouvée${results.length > 1 ? 's' : ''}.`}</p>}
       {results.length > 0 && <div className="download-list">{results.map(result => <div className={`download-row ${launched === result.id ? 'is-done' : ''}`} key={result.id}>
         <div className="download-info">
           <strong>{result.title}</strong>
@@ -109,7 +116,6 @@ export function DownloadPanel({ item, onClose, priority = false, onQueued }: { i
           {launched === result.id ? <><Check /> Envoyé</> : launching === result.id ? <><Loader2 className="spin" /> Envoi…</> : <><Download /> Télécharger</>}
         </button>
       </div>)}</div>}
-      {launchError && <div className="profile-error">{launchError}</div>}
     </div>
   </div>;
 }

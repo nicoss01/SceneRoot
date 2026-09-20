@@ -129,7 +129,7 @@ cd "$APP_DIR"
 step "Dépendances et compilation"
 run "npm ci" npm ci --no-audit --no-fund
 run "npm run build" npm run build
-chmod +x scripts/update.sh scripts/kiosk.sh scripts/kiosk-fallback.sh scripts/cec-input.py
+chmod +x scripts/update.sh scripts/kiosk.sh scripts/kiosk-fallback.sh scripts/cec-input.py scripts/doctor.sh
 
 # ── Étape 6 : configuration persistante ──────────────────────────────────────
 step "Écriture de la configuration ($ENV_FILE)"
@@ -155,6 +155,9 @@ if getent passwd debian-transmission >/dev/null; then
   sudo chmod 775 "$DOWNLOAD_DIR"
 fi
 sudo systemctl enable --now transmission-daemon >/dev/null 2>&1 && ok "Transmission actif ($CFG_TRANSMISSION)" || warn "Transmission n'a pas pu démarrer : les téléchargements seront indisponibles."
+# 409 = Transmission réclame un jeton de session : c'est la réponse d'un démon sain.
+TR_CODE="$(curl -s -o /dev/null -m 5 -w '%{http_code}' "$CFG_TRANSMISSION" 2>/dev/null || true)"
+[[ "$TR_CODE" == "409" ]] && ok "RPC Transmission joignable" || warn "RPC Transmission : HTTP ${TR_CODE:-0} — diagnostiquez avec scripts/doctor.sh --fix"
 
 # ── Étape 7 : services systemd ───────────────────────────────────────────────
 step "Services systemd"
