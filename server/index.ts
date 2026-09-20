@@ -262,16 +262,16 @@ function torznabError(xml:string){const match=xml.match(/<error[^>]*description=
 type TorznabResult={source:string;title?:string;link?:string;size:number;seeders:number;published?:string};
 // Les trackers privés répondent parfois en 15-20 s sur une recherche « froide » :
 // 12 s expiraient avant la première réponse. Réglable via l'environnement.
-const torznabTimeout=Math.max(5000,Number(process.env.SCENEROOT_TORZNAB_TIMEOUT_MS)||25000);
+// Délai par requête : assez long pour un tracker lent, assez court pour ne pas
+// bloquer l'écran de recherche quand une source ne répond plus.
+const torznabTimeout=Math.max(3000,Number(process.env.SCENEROOT_TORZNAB_TIMEOUT_MS)||12000);
 app.get<{Querystring:{q:string;kind?:'movie'|'tv';season?:string;episode?:string}}>('/api/sources/search',async(request,reply)=>{
   if(!request.query.q)return reply.code(400).send({error:'Recherche manquante'});
-  const q=stripYear(request.query.q);const results:TorznabResult[]=[];const diagnostics:Array<{source:string;status:number;count:number;error?:string;mode?:string}>=[];
-  for(const source of sources()){
+  const q=stripYear(request.query.q);
+  const type=request.query.kind==='tv'?'tvsearch':request.query.kind==='movie'?'movie':'search';
+  const searchOne=async(source:Source)=>{
     const endpoint=normalizeTorznabUrl(source.url);
     const once=async(params:Record<string,string|undefined>)=>{const url=new URL(endpoint);url.searchParams.set('apikey',source.apiKey);for(const[key,value]of Object.entries(params))if(value)url.searchParams.set(key,value);try{const res=await fetch(url,{signal:AbortSignal.timeout(torznabTimeout),headers:{'User-Agent':'SceneRoot/0.1 (+https://github.com/sceneroot)'}});const xml=await res.text();return{status:res.status,ok:res.ok,blocks:xml.match(/<item(?:\s[^>]*)?>[\s\S]*?<\/item>/gi)??[],error:res.ok?torznabError(xml):`HTTP ${res.status}`}}catch(error){return{status:0,ok:false,blocks:[] as string[],error:(error as Error).message}}};
-    // Une expiration est souvent due au réveil du tracker : on relance une fois.
-    const run=async(params:Record<string,string|undefined>)=>{const first=await once(params);if(first.ok||!first.error||!/timeout|abort/i.test(first.error))return first;return once(params)};
-    const type=request.query.kind==='tv'?'tvsearch':request.query.kind==='movie'?'movie':'search';
     // Les trackers francophones n'implémentent pas tous t=movie/tvsearch, les
     // catégories, ni season/ep : on dégrade jusqu'à la requête la plus simple,
     // celle que l'on peut reproduire à la main dans un navigateur.
@@ -281,18 +281,24 @@ app.get<{Querystring:{q:string;kind?:'movie'|'tv';season?:string;episode?:string
       {mode:'t=search + épisode dans le titre',params:{t:'search',q:episodeQuery(q,request.query.season,request.query.episode)}},
       {mode:'t=search',params:{t:'search',q}},
     ].filter((entry,index,all)=>all.findIndex(other=>JSON.stringify(other.params)===JSON.stringify(entry.params))===index);
-    let attempt=await run(attempts[0].params);let mode=attempts[0].mode;
+    let attempt=await once(attempts[0].params);let mode=attempts[0].mode;
     for(const next of attempts.slice(1)){
-      if(attempt.blocks.length)break;
-      const candidate=await run(next.params);
-      // On garde la tentative précédente si le repli échoue franchement.
+      // Une source injoignable le restera pour les replis : inutile d'attendre
+      // quatre expirations de suite avant d'afficher le diagnostic.
+      if(attempt.blocks.length||attempt.status===0)break;
+      const candidate=await once(next.params);
       if(candidate.ok||!attempt.ok){attempt=candidate;mode=next.mode}
       if(attempt.blocks.length)break;
     }
-    diagnostics.push({source:source.name,status:attempt.status,count:attempt.blocks.length,error:attempt.error,mode});
-    if(!attempt.ok){app.log.warn({source:source.name,status:attempt.status,url:endpoint},'Torznab source failed');continue}
-    for(const block of attempt.blocks)results.push({source:source.name,title:xmlText(block,'title'),link:torznabLink(block),size:Number(torznabAttr(block,'size')??xmlText(block,'size')??0),seeders:Number(torznabAttr(block,'seeders')??0),published:xmlText(block,'pubDate')});
-  }
+    const rows=attempt.ok?attempt.blocks.map(block=>({source:source.name,title:xmlText(block,'title'),link:torznabLink(block),size:Number(torznabAttr(block,'size')??xmlText(block,'size')??0),seeders:Number(torznabAttr(block,'seeders')??0),published:xmlText(block,'pubDate')})):[];
+    if(!attempt.ok)app.log.warn({source:source.name,status:attempt.status,url:endpoint},'Torznab source failed');
+    return{rows,diagnostic:{source:source.name,status:attempt.status,count:attempt.blocks.length,error:attempt.error,mode}};
+  };
+  // Sources interrogées en parallèle : la recherche dure le temps de la plus
+  // lente, non la somme de toutes.
+  const settled=await Promise.all(sources().map(searchOne));
+  const results:TorznabResult[]=settled.flatMap(entry=>entry.rows);
+  const diagnostics=settled.map(entry=>entry.diagnostic);
   app.log.info({q,diagnostics},'Torznab search');
   reply.header('X-SceneRoot-Sources',JSON.stringify(diagnostics).slice(0,600));
   return results;
@@ -306,13 +312,32 @@ async function transmission(method:string,args:Record<string,unknown>){const rpc
 function transmissionHttpError(status:number){if(status===401)return 'Transmission exige des identifiants RPC : lancez scripts/doctor.sh --fix sur le Raspberry Pi.';if(status===403)return 'Transmission refuse cette adresse : ajoutez-la à rpc-whitelist dans /etc/transmission-daemon/settings.json.';return `Transmission a répondu HTTP ${status}.`}
 /** Transforme une panne réseau en consigne exploitable depuis la TV. */
 function transmissionError(error:unknown){const message=(error as Error).message??'';if(/fetch failed|ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|timeout|abort/i.test(message))return `Le démon Transmission ne répond pas sur ${transmissionRpc}. Vérifiez qu'il tourne (sudo systemctl enable --now transmission-daemon) puis relancez SceneRoot.`;return message||'Transmission indisponible'}
+/**
+ * Prépare l'argument de torrent-add. Un aimant part tel quel ; une URL .torrent
+ * est récupérée ici plutôt que par Transmission, qui n'a ni la clé d'API ni le
+ * User-Agent attendus par les trackers privés et échouait silencieusement.
+ */
+async function torrentPayload(link:string):Promise<{filename:string}|{metainfo:string}|{error:string}>{
+  if(link.startsWith('magnet:'))return{filename:link};
+  try{
+    const response=await fetch(link,{redirect:'follow',signal:AbortSignal.timeout(20000),headers:{'User-Agent':'SceneRoot/0.1 (+https://github.com/sceneroot)',Accept:'application/x-bittorrent,*/*'}});
+    if(!response.ok)return{error:`La source a refusé le fichier .torrent (HTTP ${response.status}).`};
+    const buffer=Buffer.from(await response.arrayBuffer());
+    // Un tracker qui redirige vers sa page de connexion renvoie du HTML en 200 :
+    // un torrent commence toujours par un dictionnaire bencodé.
+    if(buffer.subarray(0,1).toString()!=='d')return{error:'La source a renvoyé une page web au lieu d’un fichier .torrent : vérifiez la clé d’API de cette source.'};
+    return{metainfo:buffer.toString('base64')};
+  }catch(error){return{error:`Téléchargement du .torrent impossible : ${(error as Error).message}`}}
+}
 function ensureTransmissionSession(){return transmission('session-set',{'download-queue-enabled':true,'download-queue-size':3,'download-dir':downloadDir}).catch(()=>{/* Transmission non configuré : appliqué dès qu'il est disponible */})}
 app.post<{Body:{magnet:string;expectedBytes?:number}}>('/api/downloads', {schema:{body:{type:'object',required:['magnet'],properties:{magnet:{type:'string',minLength:8},expectedBytes:{type:'number',minimum:0}}}}}, async (request,reply)=>{
   const source=request.body.magnet; if(!source||!/^(magnet:\?|https?:\/\/)/i.test(source)) return reply.code(400).send({error:'Lien de téléchargement invalide (magnet ou URL .torrent attendu)'});
   const targetRoot=mediaRoots.find(existsSync)??dataDir;const disk=statfsSync(targetRoot);const available=disk.bavail*disk.bsize;const gb=(n:number)=>`${(n/1024**3).toFixed(1)} Go`;const reserve=Number(loadDb().settings.minFreeGb??process.env.SCENEROOT_MIN_FREE_GB??5)*1024**3;if(available-(request.body.expectedBytes??0)<reserve)return reply.code(507).send({error:`Espace disque insuffisant sur ${targetRoot} : ${gb(available)} libres, réserve de ${gb(reserve)} exigée. Baissez la réserve dans les réglages.`,available,reserve,expectedBytes:request.body.expectedBytes??0});
   try{
     await ensureTransmissionSession();
-    const response=await transmission('torrent-add',{filename:request.body.magnet,'download-dir':downloadDir,paused:false});
+    const added=await torrentPayload(source);
+    if('error' in added)return reply.code(502).send({error:added.error});
+    const response=await transmission('torrent-add',{...added,'download-dir':downloadDir,paused:false});
     const payload=await response.json().catch(()=>({})) as {result?:string};
     if(!response.ok)return reply.code(502).send({error:`Transmission a refusé la requête (HTTP ${response.status})`});
     // Transmission répond en HTTP 200 même lorsqu'il rejette le torrent : sans
@@ -371,8 +396,17 @@ async function localCatalog(page:number,limit:number,kind?:'film'|'serie',query=
 app.get('/admin',async(_request,reply)=>reply.redirect('/admin.html'));
 const dist=resolve('./dist');
 if(existsSync(dist)){
+  // Les pages HTML ne doivent jamais être servies depuis le cache : après une
+  // mise à jour, Chromium en kiosque continuait sinon de charger l'ancien
+  // index.html, donc l'ancienne interface. Les fichiers versionnés par empreinte
+  // restent, eux, cachés durablement.
+  app.addHook('onSend',async(request,reply)=>{
+    if(request.url.startsWith('/api/'))return;
+    if(/^\/assets\//.test(request.url))reply.header('Cache-Control','public, max-age=31536000, immutable');
+    else reply.header('Cache-Control','no-cache, must-revalidate');
+  });
   await app.register(staticPlugin,{root:dist});
-  app.setNotFoundHandler((request,reply)=>request.url.startsWith('/api/')?reply.code(404).send({error:'Route inconnue'}):reply.sendFile('index.html'));
+  app.setNotFoundHandler((request,reply)=>request.url.startsWith('/api/')?reply.code(404).send({error:'Route inconnue'}):reply.header('Cache-Control','no-cache, must-revalidate').sendFile('index.html'));
 }
 await app.listen({port,host:'0.0.0.0'});
 try{purgeExpiredGuests(true)}catch(error){app.log.warn({error},'Guest purge at startup failed')}
