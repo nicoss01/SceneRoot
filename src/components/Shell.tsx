@@ -1,6 +1,6 @@
 import { Clock3, Compass, Download, Film, FolderHeart, Home, Search, Settings, Sparkles, Tv, Wifi } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Brand } from './Brand';
 import { ProfileAvatar } from './ProfileAvatar';
 import type { Profile } from '../types';
@@ -15,10 +15,25 @@ export function Shell({ profile, onSwitchProfile, children }: { profile: Profile
   const [clock,setClock]=useState(()=>new Date());
   useEffect(()=>{const timer=setInterval(()=>setClock(new Date()),30_000);return()=>clearInterval(timer)},[]);
   useEffect(()=>{window.scrollTo({top:0,left:0,behavior:'instant'})},[location.pathname]);
+  // « Retour » depuis une page ramène la télécommande sur l'entrée de menu
+  // correspondante. Les modales traitent la touche avant nous (phase de
+  // capture) : elles se ferment donc sans que le focus quitte leur contenu.
+  const navRef=useRef<HTMLElement>(null);
+  useEffect(()=>{
+    const onKey=(event:KeyboardEvent)=>{
+      if(event.key!=='Escape')return;
+      const current=navRef.current?.querySelector<HTMLElement>('a[aria-current="page"]')??navRef.current?.querySelector<HTMLElement>('a');
+      if(!current||document.activeElement===current)return;
+      event.preventDefault();
+      current.focus();
+    };
+    window.addEventListener('keydown',onKey);
+    return()=>window.removeEventListener('keydown',onKey);
+  },[]);
   return <div className="app-shell">
     <aside className="sidebar">
       <Brand compact />
-      <nav>{links.map(([to, Icon, label]) => <NavLink className="focusable" end={to==='/'} to={to} key={to} title={label}><Icon /><span>{label}</span></NavLink>)}</nav>
+      <nav ref={navRef}>{links.map(([to, Icon, label]) => <NavLink className="focusable" end={to==='/'} to={to} key={to} title={label}><Icon /><span>{label}</span></NavLink>)}</nav>
     </aside>
     <main className="main">
       <header className="topbar">
