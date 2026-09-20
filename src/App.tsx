@@ -26,7 +26,7 @@ import { DownloadPanel } from './components/DownloadPanel';
 import { QRCode } from './components/QRCode';
 import { SetupWizard } from './components/SetupWizard';
 import { TasteTree } from './components/TasteTree';
-import { useDownloads } from './hooks/useDownloads';
+import { useDownloads, type Torrent } from './hooks/useDownloads';
 import type { MediaItem, PlayerStatus, Profile } from './types';
 
 function formatTime(seconds: number) {
@@ -228,15 +228,17 @@ function PlayerPage({profile}:{profile:Profile}) {
   useEffect(()=>{if(!isLocal)return;let active=true;const tick=async()=>{try{const response=await fetch('/api/player/status');if(!response.ok)return;const next=await response.json() as PlayerStatus;if(!active)return;setStatus(next);if(next.running){positionRef.current=next.position??0;durationRef.current=next.duration??0}}catch{}};void tick();const interval=setInterval(()=>void tick(),1000);return()=>{active=false;clearInterval(interval)}},[isLocal]);
   useEffect(()=>{if(!isLocal)return;const interval=setInterval(()=>persist(),10000);const onHide=()=>persist(true);window.addEventListener('pagehide',onHide);return()=>{clearInterval(interval);window.removeEventListener('pagehide',onHide);persist(true)}},[isLocal,persist]);
   const advance=useCallback((target:string)=>{persist(true);setPanel(null);navigate(`/player/${target}`)},[persist,navigate]);
-  useEffect(()=>{const running=Boolean(status?.running);if(wasRunningRef.current&&!running&&nextEp&&durationRef.current>0)advance(nextEp.id);wasRunningRef.current=running},[status,nextEp,advance]);
+  // mpv s'est arrêté (fin du média ou « Retour » sur la vidéo) : on enchaîne sur
+  // l'épisode suivant s'il y en a un, sinon on quitte le lecteur.
+  useEffect(()=>{const running=Boolean(status?.running);if(wasRunningRef.current&&!running){if(nextEp&&durationRef.current>0)advance(nextEp.id);else{persist(true);navigate(`/rate/${item.id}`)}}wasRunningRef.current=running},[status,nextEp,advance,persist,navigate,item.id]);
   const finish=async()=>{persist(true);await control('stop').catch(()=>{});navigate(`/rate/${item.id}`)};
-  const leave=()=>{persist(true);navigate(-1)};
+  const leave=()=>{persist(true);void control('stop').catch(()=>{});navigate(-1)};
   const running=Boolean(status?.running);const playing=status?.playing??true;const position=status?.position??0;const duration=status?.duration??0;
   const pct=duration>0?Math.min(100,(position/duration)*100):0;
   const seek:React.MouseEventHandler<HTMLDivElement>=event=>{if(!running||duration<=0)return;const rect=event.currentTarget.getBoundingClientRect();const ratio=Math.min(1,Math.max(0,(event.clientX-rect.left)/rect.width));void control('seek-to',Math.round(ratio*duration))};
   const audioTracks=status?.audioTracks??[]; const subtitleTracks=status?.subtitleTracks??[];
   const nearEnd=running&&duration>0&&position>=duration-25;
-  const chromeVisible=usePlayerChrome({enabled:isLocal,onSeekBy:delta=>{if(running&&duration>0)void control('seek-to',Math.min(duration,Math.max(0,positionRef.current+delta)))},onTogglePlay:()=>{if(running)void control(playing?'pause':'play')}});
+  const chromeVisible=usePlayerChrome({enabled:isLocal,onSeekBy:delta=>{if(running&&duration>0)void control('seek-to',Math.min(duration,Math.max(0,positionRef.current+delta)))},onTogglePlay:()=>{if(running)void control(playing?'pause':'play')},onExit:leave});
   return <div className={`player ${chromeVisible?'':'chrome-hidden'}`} style={{ '--a': item.palette[0], '--b': item.palette[1], backgroundImage:`linear-gradient(105deg,rgba(1,7,14,.5),transparent 60%), url('${item.art??'/assets/sceneroot-landscape.png'}')` } as React.CSSProperties}>
     <div className="player__scene"><span>{item.symbol}</span><i/></div><div className="player__top"><Brand compact/><div><h1>{item.title}</h1><p>{item.kind === 'film'?'Film':'Série'} · {item.year} · {item.duration} · {item.quality}</p>{isLocal?(error?<small className="player-note">{error}</small>:running?<small className="player-note">Lecture native mpv sur le téléviseur.</small>:<small className="player-note">Démarrage du lecteur…</small>):<small className="player-note">Ce titre n’est pas encore dans votre médiathèque locale.</small>}</div></div>
     {panel==='audio' && <div className="track-panel"><h3><Volume2/>Piste audio</h3>{audioTracks.length?audioTracks.map(track=><button className={track.selected?'active':''} key={track.id} onClick={()=>void control('set-audio',track.id)}>{track.label}{track.selected&&<Check/>}</button>):<button disabled>Aucune piste détectée</button>}</div>}
@@ -259,7 +261,8 @@ function StreamPlayerPage({profile}:{profile:Profile}) {
   useEffect(()=>{if(phase!=='playing')return;const interval=setInterval(()=>persist(),10000);const onHide=()=>persist(true);window.addEventListener('pagehide',onHide);return()=>{clearInterval(interval);window.removeEventListener('pagehide',onHide);persist(true)}},[phase,persist]);
   const finish=async()=>{persist(true);await control('stop').catch(()=>{});navigate(mediaIdRef.current?`/rate/${mediaIdRef.current}`:'/downloads')};
   const running=Boolean(status?.running);const playing=status?.playing??true;const position=status?.position??0;const duration=status?.duration??0;
-  const chromeVisible=usePlayerChrome({enabled:phase==='playing',onSeekBy:delta=>{if(running&&duration>0)void control('seek-to',Math.min(duration,Math.max(0,positionRef.current+delta)))},onTogglePlay:()=>{if(running)void control(playing?'pause':'play')}});
+  const leaveStream=()=>{persist(true);void control('stop').catch(()=>{});navigate(-1)};
+  const chromeVisible=usePlayerChrome({enabled:phase==='playing',onSeekBy:delta=>{if(running&&duration>0)void control('seek-to',Math.min(duration,Math.max(0,positionRef.current+delta)))},onTogglePlay:()=>{if(running)void control(playing?'pause':'play')},onExit:leaveStream});
   if(phase!=='playing')return <div className="player stream-buffering" style={{backgroundImage:`linear-gradient(105deg,rgba(1,7,14,.7),transparent 60%), url('/assets/sceneroot-landscape.png')`}}>
     <div className="buffering-card">{phase==='error'?<><Download/><h1>Lecture indisponible</h1><p>{errorMsg}</p><div className="controls-row"><button onClick={()=>navigate('/downloads')}><Download/>Voir les téléchargements</button><button onClick={()=>navigate(-1)}><ArrowLeft/>Retour</button></div></>:<><span className="buffering-spinner"/><h1>Mise en mémoire tampon…</h1><p>{name||'Préparation du flux'}</p><div className="buffering-bar"><i style={{width:`${Math.min(100,Math.round(buffered*100))}%`}}/></div><small>{Math.round(buffered*100)}% mis en tampon · la lecture démarre automatiquement</small><div className="controls-row"><button onClick={()=>navigate('/downloads')}><Download/>Suivre le téléchargement</button><button onClick={()=>navigate(-1)}><ArrowLeft/>Annuler</button></div></>}</div>
   </div>;
@@ -315,16 +318,38 @@ function RootsPage({profile}:{profile:Profile}) {
 
 const torrentStatus:Record<number,string>={0:'En pause',1:'Vérif. en attente',2:'Vérification',3:'En file',4:'Téléchargement',5:'Envoi en file',6:'Partage'};
 function formatEta(seconds:number){if(seconds<0)return null;if(seconds<60)return `${seconds} s`;const h=Math.floor(seconds/3600),m=Math.floor((seconds%3600)/60);return h>0?`${h} h ${m} min`:`${m} min`}
+const downloadFilters=[{id:'all',label:'Tous'},{id:'active',label:'En cours'},{id:'done',label:'Terminés'}] as const;
+type DownloadFilter=typeof downloadFilters[number]['id'];
+
 function DownloadsPage() {
-  const {torrents,error,loading,control}=useDownloads();
+  const {torrents:allTorrents,error,loading,control}=useDownloads();
+  const navigate=useNavigate();
+  const [filter,setFilter]=useState<DownloadFilter>('all');
+  const [opening,setOpening]=useState<number|null>(null);
+  const [openError,setOpenError]=useState('');
+  // Un téléchargement est terminé dès que le fichier est complet, qu'il soit
+  // arrêté ou encore en partage.
+  const isDone=(torrent:Torrent)=>torrent.percentDone>=1;
+  const counts={all:allTorrents.length,active:allTorrents.filter(t=>!isDone(t)).length,done:allTorrents.filter(isDone).length};
+  const torrents=allTorrents.filter(torrent=>filter==='all'||(filter==='done'?isDone(torrent):!isDone(torrent)));
+  // « Lecture » ouvre la fiche du média : la médiathèque est indexée au besoin
+  // pour que le fichier tout juste arrivé y figure.
+  const openMedia=async(id:number)=>{setOpening(id);setOpenError('');try{
+    const response=await fetch(`/api/downloads/${id}/media`);
+    const payload=await response.json().catch(()=>({})) as {mediaId?:string;error?:string};
+    if(!response.ok||!payload.mediaId)throw new Error(payload.error??'Fiche introuvable');
+    navigate(`/title/${payload.mediaId}`);
+  }catch(cause){setOpenError((cause as Error).message)}finally{setOpening(null)}};
   return <><div className="welcome"><h1>Téléchargements</h1><p>File Transmission en direct · 3 téléchargements simultanés maximum, les prioritaires en haut.</p></div>
+    {allTorrents.length>0&&<div className="download-filters">{downloadFilters.map(entry=><button key={entry.id} className={`chip ${filter===entry.id?'is-on':''}`} onClick={()=>setFilter(entry.id)}>{entry.label} ({counts[entry.id]})</button>)}</div>}
+    {openError&&<div className="profile-error">{openError}</div>}
     {loading&&!torrents.length&&<div className="library-loading"><i/>Connexion à Transmission…</div>}
     {error&&<div className="library-empty"><Download/><h2>Transmission indisponible</h2><p>{error}</p></div>}
-    {!error&&!loading&&!torrents.length&&<div className="library-empty"><Download/><h2>Aucun téléchargement</h2><p>Lancez un téléchargement depuis une fiche pour le suivre ici.</p></div>}
+    {!error&&!loading&&!torrents.length&&<div className="library-empty"><Download/><h2>{allTorrents.length?'Aucun téléchargement dans ce filtre':'Aucun téléchargement'}</h2><p>{allTorrents.length?'Changez de filtre pour voir les autres téléchargements.':'Lancez un téléchargement depuis une fiche pour le suivre ici.'}</p></div>}
     {torrents.length>0&&<div className="download-list">{torrents.map((torrent,index)=>{const pct=Math.round(torrent.percentDone*100);const paused=torrent.status===0;const downloading=torrent.status===3||torrent.status===4;const eta=downloading?formatEta(torrent.eta):null;return <div className="download-row" key={torrent.id}>
       <div className="download-order"><button className="icon-btn" title="Monter en priorité" disabled={index===0} onClick={()=>void control(torrent.id,'queue-top')}><ChevronsUp/></button><button className="icon-btn" title="Monter" disabled={index===0} onClick={()=>void control(torrent.id,'queue-up')}><ChevronUp/></button><button className="icon-btn" title="Descendre" disabled={index===torrents.length-1} onClick={()=>void control(torrent.id,'queue-down')}><ChevronDown/></button></div>
       <div className="download-info"><strong>{torrent.name}</strong><div className="download-badges"><span className={downloading?'score':''}>{torrentStatus[torrent.status]??'—'}</span><span>{pct}%</span><span>{formatBytes(torrent.sizeWhenDone||torrent.totalSize)}</span>{torrent.rateDownload>0&&<span>↓ {formatBytes(torrent.rateDownload)}/s</span>}{eta&&<span>reste {eta}</span>}<span>{torrent.peersConnected} pair{torrent.peersConnected>1?'s':''}</span>{torrent.errorString&&<span className="src">{torrent.errorString}</span>}</div><span className="progress"><i style={{width:`${pct}%`}}/></span></div>
-      <div className="download-actions">{paused?<button className="icon-btn" title="Reprendre" onClick={()=>void control(torrent.id,'start')}><Play fill="currentColor"/></button>:<button className="icon-btn" title="Mettre en pause" onClick={()=>void control(torrent.id,'stop')}><Pause/></button>}<button className="icon-btn" title="Annuler" onClick={()=>{if(window.confirm('Retirer ce téléchargement ? Les données déjà téléchargées sont conservées.'))void control(torrent.id,'remove',false)}}><Trash2/></button></div>
+      <div className="download-actions">{torrent.percentDone>=1&&<button className="primary download-play" disabled={opening===torrent.id} onClick={()=>void openMedia(torrent.id)}><Play fill="currentColor"/>{opening===torrent.id?'Ouverture…':'Lecture'}</button>}{paused?<button className="icon-btn" title="Reprendre" onClick={()=>void control(torrent.id,'start')}><Play fill="currentColor"/></button>:<button className="icon-btn" title="Mettre en pause" onClick={()=>void control(torrent.id,'stop')}><Pause/></button>}<button className="icon-btn" title="Annuler" onClick={()=>{if(window.confirm('Retirer ce téléchargement ? Les données déjà téléchargées sont conservées.'))void control(torrent.id,'remove',false)}}><Trash2/></button></div>
     </div>})}</div>}
   </>;
 }
@@ -430,7 +455,9 @@ function App() {
     const param=new URLSearchParams(window.location.search).get('tv');
     if(param)localStorage.setItem('sceneroot-tv-zoom',param);
     const zoom=localStorage.getItem('sceneroot-tv-zoom');
-    if(zoom&&Number(zoom)>0)document.documentElement.style.setProperty('zoom',zoom);
+    // Le zoom est aussi exposé en variable CSS : une page qui doit tenir dans
+    // l'écran (le lecteur) divise 100vh par ce facteur, sinon elle déborde.
+    if(zoom&&Number(zoom)>0){document.documentElement.style.setProperty('zoom',zoom);document.documentElement.style.setProperty('--tv-zoom',zoom)}
   }catch{/* stockage indisponible : zoom par défaut */} },[]);
   // Masque le pointeur après quelques secondes sans mouvement (sur la TV il disparaît
   // et ne revient jamais ; sur un ordinateur il réapparaît au moindre déplacement).

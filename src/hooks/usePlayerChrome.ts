@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-type Handlers = { onSeekBy: (deltaSeconds: number) => void; onTogglePlay: () => void; enabled?: boolean };
+type Handlers = { onSeekBy: (deltaSeconds: number) => void; onTogglePlay: () => void; onExit?: () => void; enabled?: boolean };
 
 const HIDE_DELAY = 5000;
 const SEEK_STEP = 10;
@@ -16,6 +16,8 @@ export function usePlayerChrome(handlers: Handlers): boolean {
   const ref = useRef(handlers);
   ref.current = handlers;
   const [visible, setVisible] = useState(true);
+  const visibleRef = useRef(true);
+  visibleRef.current = visible;
   const enabled = handlers.enabled !== false;
 
   useEffect(() => {
@@ -29,6 +31,11 @@ export function usePlayerChrome(handlers: Handlers): boolean {
       if (event.key === 'ArrowRight') { event.preventDefault(); event.stopImmediatePropagation(); ref.current.onSeekBy(SEEK_STEP); }
       else if (event.key === 'ArrowLeft') { event.preventDefault(); event.stopImmediatePropagation(); ref.current.onSeekBy(-SEEK_STEP); }
       else if (event.key === ' ') { event.preventDefault(); event.stopImmediatePropagation(); ref.current.onTogglePlay(); }
+      // « OK » de la télécommande : bascule lecture/pause, sauf quand un bouton
+      // de l'interface a le focus — il doit rester actionnable.
+      else if (event.key === 'Enter' && !(document.activeElement instanceof HTMLButtonElement && visibleRef.current)) { event.preventDefault(); event.stopImmediatePropagation(); ref.current.onTogglePlay(); }
+      // « Retour » : on quitte le lecteur et la vidéo s'arrête.
+      else if (event.key === 'Escape' && ref.current.onExit) { event.preventDefault(); event.stopImmediatePropagation(); ref.current.onExit(); }
     };
     window.addEventListener('mousemove', activity);
     window.addEventListener('touchstart', activity, { passive: true });

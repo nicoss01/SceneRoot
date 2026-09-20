@@ -279,7 +279,10 @@ section { margin: 0 0 13px; }
 .icon-btn { padding: 11px 14px; }
 
 /* Player */
-.player { min-height: 100vh; position: relative; overflow: hidden; background: linear-gradient(105deg,rgba(1,7,14,.5),transparent 60%), url('/assets/sceneroot-landscape.png') center/cover no-repeat; }
+/* Le zoom TV agrandit toute la page : 100vh déborderait et forcerait un
+   défilement pour atteindre la barre de lecture. On ramène donc la hauteur du
+   lecteur à celle de l'écran réel. */
+.player { height: calc(100vh / var(--tv-zoom, 1)); min-height: calc(100vh / var(--tv-zoom, 1)); position: relative; overflow: hidden; background: linear-gradient(105deg,rgba(1,7,14,.5),transparent 60%), url('/assets/sceneroot-landscape.png') center/cover no-repeat; }
 .player:after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg,rgba(1,6,13,.18) 35%,rgba(1,6,13,.86)); }
 .player__scene { position: absolute; inset: 0; display: grid; place-items: center; color: rgba(218,248,255,.22); font-size: 220px; text-shadow: 0 0 70px #2dd4bf; }
 .player__scene i { width: 550px; height: 550px; position: absolute; border: 1px solid rgba(103,232,249,.32); border-radius: 50%; box-shadow: 0 0 100px var(--a); }
@@ -608,3 +611,6 @@ body.hide-cursor, body.hide-cursor * { cursor: none !important; }
 .source-diagnostics { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; text-align: left; font-size: 13px; color: #b3c4d8; }
 .source-diagnostics strong { color: var(--cyan); }
 .source-diagnostics em { color: #8fa6c0; font-style: normal; }
+
+.download-filters { display: flex; gap: 10px; margin: 0 0 18px; flex-wrap: wrap; }
+.download-play { display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; font-size: 15px; white-space: nowrap; }

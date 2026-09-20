@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import staticPlugin from '@fastify/static';
-import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statfsSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statfsSync, statSync, writeFileSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { extname, isAbsolute, join, parse, relative, resolve } from 'node:path';
 import { execFile, spawn } from 'node:child_process';
@@ -52,7 +52,36 @@ let mpvProcess: ReturnType<typeof spawn> | null = null;
 let mpvRequestId=0;
 function mpvCommand<T=unknown>(command:unknown[]):Promise<T>{return new Promise((resolve,reject)=>{const requestId=++mpvRequestId;const socket=createConnection(mpvSocket);let buffer='';const timer=setTimeout(()=>{socket.destroy();reject(new Error('mpv IPC timeout'))},2500);const finish=(fn:()=>void)=>{clearTimeout(timer);socket.removeAllListeners();try{socket.end()}catch{}fn()};socket.on('connect',()=>socket.write(JSON.stringify({command,request_id:requestId})+'\n'));socket.on('data',chunk=>{buffer+=chunk.toString('utf8');let index;while((index=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,index).trim();buffer=buffer.slice(index+1);if(!line)continue;let message:{request_id?:number;error?:string;data?:unknown};try{message=JSON.parse(line)}catch{continue}if(message.request_id===requestId){if(message.error&&message.error!=='success')return finish(()=>reject(new Error(message.error)));return finish(()=>resolve(message.data as T))}}});socket.on('error',err=>{clearTimeout(timer);reject(err)})})}
 async function mpvGet<T>(name:string):Promise<T|null>{try{return await mpvCommand<T>(['get_property',name])}catch{return null}}
-function spawnMpv(path:string,start:number){mpvProcess?.kill();const args=['--fs','--hwdec=auto-safe','--audio-display=no','--keep-open=no',`--input-ipc-server=${mpvSocket}`];if(start>0)args.push(`--start=${Math.floor(start)}`);args.push(path);mpvProcess=spawn('mpv',args,{stdio:'ignore',env:{...process.env,DISPLAY:process.env.DISPLAY??':0'}});mpvProcess.on('exit',()=>{mpvProcess=null});mpvProcess.on('error',error=>app.log.warn({error},'mpv failed'))}
+/**
+ * Environnement graphique du kiosque. Le serveur tourne en service systemd :
+ * sans l'adresse du compositeur en cours, mpv ne trouve aucune sortie vidéo et
+ * ne joue que le son. On repère donc la session Wayland vivante.
+ */
+function kioskDisplayEnv():Record<string,string>{
+  try{
+    for(const entry of readdirSync('/run/user')){
+      const runtimeDir=`/run/user/${entry}`;
+      const socket=readdirSync(runtimeDir).find(name=>/^wayland-\d+$/.test(name));
+      if(socket)return{XDG_RUNTIME_DIR:runtimeDir,WAYLAND_DISPLAY:socket};
+    }
+  }catch{/* pas de session Wayland : on retombe sur X ou DRM */}
+  return{};
+}
+/** Télécommande HDMI-CEC : OK met en pause, les flèches déplacent, Retour quitte. */
+const mpvInputConf=join(dataDir,'mpv-input.conf');
+function writeMpvInput(){
+  try{writeFileSync(mpvInputConf,['# Généré par SceneRoot — ne pas modifier','ENTER cycle pause','KP_ENTER cycle pause','PLAYPAUSE cycle pause','PLAY cycle pause','PAUSE cycle pause','SPACE cycle pause','RIGHT seek 10','LEFT seek -10','UP seek 60','DOWN seek -60','ESC quit','BS quit','STOP quit',''].join('\n'))}
+  catch(error){app.log.warn({error},'mpv input configuration could not be written')}
+}
+function spawnMpv(path:string,start:number){
+  mpvProcess?.kill();
+  const args=['--fs','--hwdec=auto-safe','--audio-display=no','--keep-open=no','--no-terminal',`--input-conf=${mpvInputConf}`,`--input-ipc-server=${mpvSocket}`];
+  if(start>0)args.push(`--start=${Math.floor(start)}`);
+  args.push(path);
+  mpvProcess=spawn('mpv',args,{stdio:'ignore',env:{...process.env,DISPLAY:process.env.DISPLAY??':0',...kioskDisplayEnv()}});
+  mpvProcess.on('exit',()=>{mpvProcess=null});
+  mpvProcess.on('error',error=>app.log.warn({error},'mpv failed'));
+}
 function playbackEntry(value:unknown):PlaybackEntry|null{if(value==null)return null;if(typeof value==='number')return{position:value,duration:0,updatedAt:new Date(0).toISOString()};const v=value as Partial<PlaybackEntry>;return typeof v.position==='number'?{position:v.position,duration:Number(v.duration??0),updatedAt:String(v.updatedAt??new Date(0).toISOString())}:null}
 mkdirSync(dataDir, { recursive: true });
 mkdirSync(cacheDir, { recursive: true });
@@ -379,6 +408,27 @@ app.get('/api/downloads', async (_request,reply)=>{try{const response=await tran
 const queueMethods:Record<string,string>={start:'torrent-start',stop:'torrent-stop',remove:'torrent-remove','queue-top':'queue-move-top','queue-up':'queue-move-up','queue-down':'queue-move-down','queue-bottom':'queue-move-bottom'};
 app.post<{Params:{id:string};Body:{action:keyof typeof queueMethods;deleteData?:boolean}}>('/api/downloads/:id/control', {schema:{body:{type:'object',required:['action'],properties:{action:{type:'string',enum:['start','stop','remove','queue-top','queue-up','queue-down','queue-bottom']},deleteData:{type:'boolean'}}}}}, async (request,reply)=>{const id=Number(request.params.id);if(!Number.isFinite(id))return reply.code(400).send({error:'Identifiant invalide'});const method=queueMethods[request.body.action];if(!method)return reply.code(400).send({error:'Action inconnue'});try{const args:Record<string,unknown>=request.body.action==='remove'?{ids:[id],'delete-local-data':Boolean(request.body.deleteData)}:{ids:[id]};const response=await transmission(method,args);if(!response.ok)return reply.code(502).send({error:transmissionHttpError(response.status)});return{ok:true}}catch(error){return reply.code((error as {statusCode?:number}).statusCode??503).send({error:transmissionError(error)})}});
 app.post<{Body:RankPrefs&{kind?:'film'|'serie';candidates:RankCandidate[]}}>('/api/downloads/rank',async request=>rankDownloads(request.body.candidates,request.body));
+/**
+ * Fiche du média correspondant à un téléchargement terminé. Le fichier vient
+ * d'arriver : on indexe la médiathèque si besoin pour que la page existe.
+ */
+app.get<{Params:{id:string}}>('/api/downloads/:id/media',async(request,reply)=>{
+  const id=Number(request.params.id);if(!Number.isFinite(id))return reply.code(400).send({error:'Identifiant invalide'});
+  try{
+    const response=await transmission('torrent-get',{ids:[id],fields:['name','downloadDir','files','percentDone']});
+    if(!response.ok)return reply.code(502).send({error:transmissionHttpError(response.status)});
+    const torrent=(await response.json() as {arguments?:{torrents?:Array<{downloadDir:string;percentDone:number;files?:Array<{name:string;length:number}>}>}}).arguments?.torrents?.[0];
+    if(!torrent)return reply.code(404).send({error:'Téléchargement introuvable'});
+    const videos=(torrent.files??[]).filter(file=>videoExt.has(extname(file.name).toLowerCase()));
+    if(!videos.length)return reply.code(409).send({error:'Aucun fichier vidéo dans ce téléchargement'});
+    const file=videos.reduce((best,candidate)=>candidate.length>best.length?candidate:best);
+    const path=resolve(join(torrent.downloadDir,file.name));
+    if(!isWithinRoots(path))return reply.code(403).send({error:'Le dossier de téléchargement n’est pas dans une racine média autorisée'});
+    const mediaId=slug(path);
+    if(!loadDb().library.some(item=>item.id===mediaId))await scanLibrary();
+    return{mediaId,name:file.name,indexed:loadDb().library.some(item=>item.id===mediaId)};
+  }catch(error){return reply.code((error as {statusCode?:number}).statusCode??503).send({error:transmissionError(error)})}
+});
 app.post<{Params:{id:string};Body:{startPosition?:number}}>('/api/downloads/:id/play',async(request,reply)=>{const id=Number(request.params.id);if(!Number.isFinite(id))return reply.code(400).send({error:'Identifiant invalide'});try{await transmission('torrent-set',{ids:[id],sequentialDownload:true}).catch(()=>{/* séquentiel non supporté (Transmission < 4.1) */});const response=await transmission('torrent-get',{ids:[id],fields:['id','name','downloadDir','percentDone','files']});if(!response.ok)return reply.code(502).send({error:transmissionHttpError(response.status)});const torrent=(await response.json() as {arguments?:{torrents?:Array<{name:string;downloadDir:string;files?:Array<{name:string;length:number;bytesCompleted:number}>}>}}).arguments?.torrents?.[0];if(!torrent)return reply.code(404).send({error:'Téléchargement introuvable'});const videos=(torrent.files??[]).filter(file=>videoExt.has(extname(file.name).toLowerCase()));if(!videos.length)return reply.code(409).send({error:'Aucun fichier vidéo dans ce téléchargement'});const file=videos.reduce((best,candidate)=>candidate.length>best.length?candidate:best);const path=resolve(join(torrent.downloadDir,file.name));if(!isWithinRoots(path))return reply.code(403).send({error:'Le dossier de téléchargement n’est pas dans une racine média autorisée'});const buffered=file.length>0?file.bytesCompleted/file.length:0;const mediaId=slug(path);const complete=file.bytesCompleted>=file.length&&file.length>0;const ready=existsSync(path)&&(complete||buffered>=0.02);if(!ready)return{ready:false,buffered,name:file.name,mediaId};spawnMpv(path,Number(request.body?.startPosition)||0);return{ready:true,engine:'mpv',mediaId,buffered,name:file.name}}catch(error){return reply.code((error as {statusCode?:number}).statusCode??503).send({error:transmissionError(error)})}});
 app.get('/api/cec/status',async()=>{
   const adapter=['/dev/cec0','/dev/cec1','/dev/cec2','/dev/cec3'].find(existsSync)??null;
@@ -439,6 +489,7 @@ if(existsSync(dist)){
 }
 await app.listen({port,host:'0.0.0.0'});
 try{purgeExpiredGuests(true)}catch(error){app.log.warn({error},'Guest purge at startup failed')}
+writeMpvInput();
 void ensureTransmissionSession();
 setInterval(()=>{try{purgeExpiredGuests()}catch(error){app.log.warn({error},'Guest purge failed')}},5*60_000).unref();
 function warmRecentCatalog(){void catalogFor('film',1,12,true).catch(()=>{});void catalogFor('serie',1,12,true).catch(()=>{})}
