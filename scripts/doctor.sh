@@ -17,7 +17,8 @@ head_() { echo; echo "${C_B}$1${C_R}"; }
 FAILED=0
 
 head_ "Configuration ($ENV_FILE)"
-if [[ -r "$ENV_FILE" ]]; then
+# Le fichier est en 600 root : seul sudo peut le lire, y compris pour ce test.
+if sudo test -r "$ENV_FILE"; then
   ok "Fichier présent"
   RPC="$(sudo grep -m1 '^TRANSMISSION_RPC_URL=' "$ENV_FILE" | cut -d= -f2-)"
   if [[ -n "$RPC" ]]; then ok "TRANSMISSION_RPC_URL=$RPC"
@@ -48,10 +49,27 @@ else
   else bad "Service $STATE (--fix le démarre)"; fi
 fi
 
-CODE="$(curl -s -o /dev/null -m 5 -w '%{http_code}' "$RPC" 2>/dev/null)"
+# Avec authentification, Transmission renvoie 401 avant même de réclamer son
+# jeton de session : on interroge donc le RPC avec les identifiants du serveur.
+probe_rpc() {
+  local auth; auth="$(sudo grep -m1 '^TRANSMISSION_RPC_AUTH=' "$ENV_FILE" 2>/dev/null | cut -d= -f2-)"
+  if [[ -n "$auth" ]]; then curl -s -o /dev/null -m 5 -u "$auth" -w '%{http_code}' "$RPC" 2>/dev/null
+  else curl -s -o /dev/null -m 5 -w '%{http_code}' "$RPC" 2>/dev/null; fi
+}
+CODE="$(probe_rpc)"
+if [[ "$CODE" == 401 ]] && (( FIX )); then
+  # Debian impose des identifiants RPC que nous ne connaissons pas : on en pose
+  # de nouveaux, réutilisables par le serveur.
+  DL_FOR_TR="$(sudo grep -m1 '^SCENEROOT_MEDIA=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- | cut -d, -f1)"
+  if sudo "$(dirname "$0")/transmission-setup.sh" "${DL_FOR_TR:-/mnt/media}/downloads" "$ENV_FILE"; then
+    ok "Identifiants RPC dédiés installés"
+    sleep 2  # laisse le démon recharger sa configuration
+    CODE="$(probe_rpc)"
+  fi
+fi
 case "$CODE" in
   409) ok "RPC joignable (409 = demande de jeton de session, réponse normale)";;
-  401) bad "RPC protégé par mot de passe : renseignez TRANSMISSION_RPC_AUTH=user:motdepasse dans $ENV_FILE";;
+  401) bad "RPC protégé par mot de passe : relancez ./scripts/doctor.sh --fix pour poser des identifiants dédiés";;
   403) bad "RPC refusé : ajoutez l'adresse à rpc-whitelist dans /etc/transmission-daemon/settings.json";;
   000) bad "RPC injoignable sur $RPC (démon arrêté ou port différent)";;
   *)   warn "RPC : HTTP $CODE";;
@@ -76,15 +94,15 @@ if [[ -d "$DL" ]]; then
 fi
 
 head_ "Serveur SceneRoot"
+# Le serveur ne relit /etc/sceneroot.env qu'au démarrage : on le relance avant
+# de le tester, sinon il travaille encore avec l'ancienne configuration.
+if (( FIX )); then
+  sudo systemctl restart sceneroot && ok "Serveur relancé avec la configuration à jour"
+  for _ in $(seq 1 15); do curl -fsS -m 2 http://127.0.0.1:4174/api/health >/dev/null 2>&1 && break; sleep 1; done
+fi
 if [[ "$(systemctl is-active sceneroot 2>/dev/null)" == active ]]; then ok "Service actif"; else bad "Service inactif : journalctl -u sceneroot -n 30"; fi
 DLCODE="$(curl -s -o /dev/null -m 5 -w '%{http_code}' http://127.0.0.1:4174/api/downloads 2>/dev/null)"
 [[ "$DLCODE" == 200 ]] && ok "/api/downloads répond 200" || bad "/api/downloads répond $DLCODE : $(curl -s -m 5 http://127.0.0.1:4174/api/downloads | head -c 300)"
-
-if (( FIX )); then
-  head_ "Redémarrage de SceneRoot"
-  # Le serveur ne relit /etc/sceneroot.env qu'au démarrage.
-  sudo systemctl restart sceneroot && ok "Serveur relancé"
-fi
 
 echo
 (( FAILED == 0 )) && echo "  ${C_G}${C_B}Tout est en place.${C_R}" || echo "  ${C_E}${C_B}${FAILED} problème(s) — relancez avec --fix si proposé.${C_R}"
