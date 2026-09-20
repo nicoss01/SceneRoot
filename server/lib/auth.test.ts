@@ -73,6 +73,13 @@ describe('requiresAdmin', () => {
     expect(requiresAdmin('POST', '/api/sources')).toBe(true);
     expect(requiresAdmin('DELETE', '/api/sources/abc')).toBe(true);
     expect(requiresAdmin('PUT', '/api/settings')).toBe(true);
+    expect(requiresAdmin('POST', '/api/profiles')).toBe(true);
+    expect(requiresAdmin('PUT', '/api/profiles/abc')).toBe(true);
+    expect(requiresAdmin('DELETE', '/api/profiles/abc')).toBe(true);
+  });
+  it('keeps the PIN check open: it is the authentication itself', () => {
+    expect(requiresAdmin('POST', '/api/profiles/abc/unlock')).toBe(false);
+    expect(requiresAdmin('GET', '/api/profiles')).toBe(false);
   });
   it('leaves read, compute and family routes open', () => {
     expect(requiresAdmin('GET', '/api/library')).toBe(false);
@@ -81,7 +88,5 @@ describe('requiresAdmin', () => {
     expect(requiresAdmin('GET', '/api/downloads')).toBe(false);
     expect(requiresAdmin('GET', '/api/cache')).toBe(false);
     expect(requiresAdmin('GET', '/api/sources/search')).toBe(false);
-    expect(requiresAdmin('DELETE', '/api/profiles/1')).toBe(false);
-    expect(requiresAdmin('PUT', '/api/profiles/1')).toBe(false);
   });
 });

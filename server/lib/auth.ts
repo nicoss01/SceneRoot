@@ -46,11 +46,12 @@ export function isAdminAuthorized(remoteAddress: string | undefined, token: stri
 
 export function requiresAdmin(method: string, url: string): boolean {
   const path = url.split('?')[0];
-  if (method === 'DELETE') return path === '/api/cache' || /^\/api\/sources\/[^/]+$/.test(path);
-  if (method === 'PUT') return path === '/api/settings';
+  if (method === 'DELETE') return path === '/api/cache' || /^\/api\/sources\/[^/]+$/.test(path) || /^\/api\/profiles\/[^/]+$/.test(path);
+  if (method === 'PUT') return path === '/api/settings' || /^\/api\/profiles\/[^/]+$/.test(path);
   if (method !== 'POST') return false;
   if (path === '/api/downloads/rank') return false;
-  return path === '/api/library/scan'
+  return path === '/api/profiles'
+    || path === '/api/library/scan'
     || path === '/api/library/enrich'
     || path === '/api/catalog/sync'
     || path === '/api/cec' || path.startsWith('/api/cec/')

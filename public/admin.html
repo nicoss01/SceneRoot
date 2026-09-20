@@ -69,6 +69,24 @@
   </section>
 
   <section class="card">
+    <h2>👥 Profils</h2>
+    <div id="profiles"></div>
+    <div class="grid" id="profileForm" style="margin-top:8px">
+      <input id="p_name" placeholder="Prénom" maxlength="32" />
+      <select id="p_age"><option value="18">Tout public</option><option value="16">-16</option><option value="13">-13</option><option value="10">-10</option></select>
+      <label for="p_avatar">Avatar</label>
+      <div class="chips" id="p_avatars"></div>
+      <input id="p_pin" type="password" inputmode="numeric" autocomplete="off" placeholder="Code de verrouillage (facultatif)" />
+      <button type="button" class="chip" id="clearPin" style="display:none">Retirer le code existant</button>
+      <div class="row">
+        <button class="primary" id="saveProfile">Créer le profil</button>
+        <button class="ghost" id="cancelProfile" style="display:none">Annuler</button>
+      </div>
+    </div>
+    <div class="hint">Supprimer un profil efface aussi son historique et ses notes.</div>
+  </section>
+
+  <section class="card">
     <h2>⬇️ Téléchargements</h2>
     <div class="between"><span>Réserve d'espace disque</span><span class="val" id="reserveVal">— Go</span></div>
     <input id="reserve" type="range" min="5" max="500" step="5" />
@@ -173,7 +191,89 @@
   function val(id){ return document.getElementById(id).value.trim(); }
   async function delSource(id){ if(!confirm('Supprimer cette source ?')) return; try{ await api('DELETE','/api/sources/'+encodeURIComponent(id)); toast('Source supprimée',true); await loadSettings(); }catch(e){ toast(e.message,false); } }
 
-  loadStorage(); loadCache(); loadSettings();
+  // Gestion des profils — la liste d'avatars reprend celle de src/data/avatars.ts.
+  var AVATARS=[['geek','Geek'],['fun','Fun'],['space','Espace'],['pop','Pop'],['colere','Colère'],['amour','Amour'],['triste','Triste'],['reflechi','Réfléchi'],['trouve','Eurêka'],['game','Gaming']];
+  var ACCENTS={geek:'#22d3ee',fun:'#38bdf8',space:'#60a5fa',pop:'#fbbf24',colere:'#fb7185',amour:'#f472b6',triste:'#818cf8',reflechi:'#a78bfa',trouve:'#facc15',game:'#0ea5e9'};
+  var editingId=null, chosenAvatar=AVATARS[0][0], clearPin=false;
+
+  function renderClearPin(visible){
+    var button=document.getElementById('clearPin');
+    button.style.display=visible?'block':'none';
+    button.className='chip'+(clearPin?' on':'');
+    button.textContent=clearPin?'Le code sera retiré':'Retirer le code existant';
+  }
+  document.getElementById('clearPin').addEventListener('click',function(){ clearPin=!clearPin; document.getElementById('p_pin').value=''; renderClearPin(true); });
+  function renderAvatarChoices(){
+    var host=document.getElementById('p_avatars'); host.innerHTML='';
+    AVATARS.forEach(function(entry){
+      var b=document.createElement('button');
+      b.type='button'; b.className='chip'+(entry[0]===chosenAvatar?' on':''); b.textContent=entry[1];
+      b.onclick=function(){ chosenAvatar=entry[0]; renderAvatarChoices(); };
+      host.appendChild(b);
+    });
+  }
+  function resetProfileForm(){
+    editingId=null; chosenAvatar=AVATARS[0][0];
+    document.getElementById('p_name').value=''; document.getElementById('p_age').value='18'; document.getElementById('p_pin').value='';
+    document.getElementById('p_pin').placeholder='Code de verrouillage (facultatif)';
+    document.getElementById('saveProfile').textContent='Créer le profil';
+    document.getElementById('cancelProfile').style.display='none';
+    clearPin=false; renderClearPin(false);
+    renderAvatarChoices();
+  }
+  function editProfile(profile){
+    editingId=profile.id;
+    document.getElementById('p_name').value=profile.name||'';
+    document.getElementById('p_age').value=String(profile.ageLimit||18);
+    document.getElementById('p_pin').value='';
+    // Un champ vide conserve le code existant : le mot de passe n'est jamais renvoyé.
+    document.getElementById('p_pin').placeholder=profile.locked?'Laisser vide pour conserver le code':'Code de verrouillage (facultatif)';
+    var match=/\/assets\/avatars\/([^.]+)\.png$/.exec(profile.avatar||'');
+    chosenAvatar=match?match[1]:AVATARS[0][0];
+    document.getElementById('saveProfile').textContent='Enregistrer les modifications';
+    document.getElementById('cancelProfile').style.display='block';
+    clearPin=false; renderClearPin(!!profile.locked);
+    renderAvatarChoices();
+    document.getElementById('profileForm').scrollIntoView({behavior:'smooth',block:'center'});
+  }
+  async function loadProfiles(){
+    var host=document.getElementById('profiles');
+    try{
+      var list=await api('GET','/api/profiles');
+      host.innerHTML='';
+      if(!list.length){ host.innerHTML='<div class="muted">Aucun profil.</div>'; return; }
+      list.forEach(function(profile){
+        var row=document.createElement('div'); row.className='list-item';
+        row.innerHTML='<div class="info"><b>'+esc(profile.name)+(profile.locked?' 🔒':'')+'</b><small>'+(profile.ageLimit===18?'Tout public':'-'+profile.ageLimit)+'</small></div>';
+        var edit=document.createElement('button'); edit.textContent='Modifier'; edit.style.flex='0 0 auto'; edit.onclick=function(){ editProfile(profile); };
+        var del=document.createElement('button'); del.className='danger'; del.textContent='Supprimer'; del.style.flex='0 0 auto';
+        del.onclick=function(){ removeProfile(profile); };
+        row.appendChild(edit); row.appendChild(del); host.appendChild(row);
+      });
+    }catch(e){ host.textContent=e.message; }
+  }
+  async function removeProfile(profile){
+    if(!confirm('Supprimer le profil « '+profile.name+' » ? Son historique et ses notes seront effacés.')) return;
+    try{ await api('DELETE','/api/profiles/'+encodeURIComponent(profile.id)); toast('Profil supprimé',true); if(editingId===profile.id) resetProfileForm(); await loadProfiles(); }
+    catch(e){ toast(e.message,false); }
+  }
+  document.getElementById('cancelProfile').addEventListener('click',resetProfileForm);
+  document.getElementById('saveProfile').addEventListener('click',async function(){
+    var name=val('p_name');
+    if(!name){ toast('Saisissez un prénom',false); return; }
+    var pin=val('p_pin');
+    var body={ name:name, ageLimit:Number(document.getElementById('p_age').value), avatar:'/assets/avatars/'+chosenAvatar+'.png', accent:ACCENTS[chosenAvatar]||'#22d3ee' };
+    if(pin) body.pin=pin; else if(clearPin) body.pin=null;
+    this.disabled=true;
+    try{
+      await api(editingId?'PUT':'POST', editingId?'/api/profiles/'+encodeURIComponent(editingId):'/api/profiles', body);
+      toast(editingId?'Profil modifié':'Profil créé',true);
+      resetProfileForm(); await loadProfiles();
+    }catch(e){ toast(e.message,false); } finally{ this.disabled=false; }
+  });
+
+  resetProfileForm();
+  loadStorage(); loadCache(); loadSettings(); loadProfiles();
 })();
 </script>
 </body>
