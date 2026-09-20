@@ -70,17 +70,23 @@ function kioskDisplayEnv():Record<string,string>{
   return{};
 }
 /**
- * Télécommande HDMI-CEC. Chaque action réaffiche la barre de lecture de mpv
- * (« show-progress »), qui s'efface seule au bout de --osd-duration.
+ * Télécommande HDMI-CEC. Chaque action réaffiche l'affichage de mpv, seul
+ * visible pendant la lecture : il occupe l'écran devant le navigateur, donc
+ * l'interface web ne peut pas s'y superposer.
  */
 const mpvInputConf=join(dataDir,'mpv-input.conf');
 function writeMpvInput(){
+  const status='show-text "${?pause==yes:⏸}${!pause==yes:▶}  ${time-pos} / ${duration}" 5000';
   const bindings=[
     '# Généré par SceneRoot — ne pas modifier',
-    'ENTER cycle pause; show-progress','KP_ENTER cycle pause; show-progress','SPACE cycle pause; show-progress',
-    'PLAYPAUSE cycle pause; show-progress','PLAY set pause no; show-progress','PAUSE set pause yes; show-progress',
+    `ENTER cycle pause; ${status}`,`KP_ENTER cycle pause; ${status}`,`SPACE cycle pause; ${status}`,
+    `PLAYPAUSE cycle pause; ${status}`,`PLAY set pause no; ${status}`,`PAUSE set pause yes; ${status}`,
     'RIGHT seek 10; show-progress','LEFT seek -10; show-progress',
     'UP show-progress','DOWN show-progress',
+    // Pistes : « v » affiche ou masque les sous-titres, « j » et « a » changent de piste.
+    'v cycle sub-visibility; show-text "${?sub-visibility==yes:Sous-titres affichés}${!sub-visibility==yes:Sous-titres masqués} · ${?sub-lang:${sub-lang}}" 3000',
+    'j cycle sub; show-text "Sous-titres : ${?sid==no:aucun}${!sid==no:${sub-lang} (piste ${sid})}" 3000',
+    'a cycle audio; show-text "Audio : ${audio-lang} (piste ${aid})" 3000',
     'ESC quit','BS quit','STOP quit','',
   ];
   try{writeFileSync(mpvInputConf,bindings.join('\n'))}
@@ -90,11 +96,17 @@ function spawnMpv(path:string,start:number){
   mpvProcess?.kill();
   // Sous un compositeur, le décodage matériel « direct » publie l'image sur un
   // plan que Cage ne compose pas : l'écran reste bleu alors que le son tourne.
-  // La variante « copy » ramène les images vers la sortie vidéo.
+  // La variante « copy » ramène les images, au prix de quelques copies : le
+  // profil « fast » de mpv compense sur un Raspberry Pi.
   const hwdec=process.env.SCENEROOT_MPV_HWDEC??'auto-copy-safe';
-  const args=[`--vo=${process.env.SCENEROOT_MPV_VO??'gpu'}`,`--hwdec=${hwdec}`,'--fs','--audio-display=no','--keep-open=no','--no-terminal',
-    '--osd-duration=5000','--osd-bar=yes',
+  const args=[`--vo=${process.env.SCENEROOT_MPV_VO??'gpu'}`,`--hwdec=${hwdec}`,'--profile=fast','--fs','--audio-display=no','--keep-open=no','--no-terminal',
+    // Le fichier peut encore être en cours de téléchargement : on lit en avance.
+    '--cache=yes','--demuxer-readahead-secs=20',
+    '--osd-duration=5000','--osd-bar=yes','--slang=fr,fre,fra,French','--alang=fr,fre,fra,French',
     `--input-conf=${mpvInputConf}`,`--input-ipc-server=${mpvSocket}`];
+  // Échappatoire pour ajuster la sortie vidéo sur une machine particulière.
+  const extra=(process.env.SCENEROOT_MPV_ARGS??'').split(' ').map(value=>value.trim()).filter(Boolean);
+  args.push(...extra);
   if(start>0)args.push(`--start=${Math.floor(start)}`);
   args.push(path);
   mpvProcess=spawn('mpv',args,{stdio:['ignore','ignore','pipe'],env:{...process.env,DISPLAY:process.env.DISPLAY??':0',...kioskDisplayEnv()}});

@@ -30,6 +30,22 @@ KEYS = {
     "rewind": (ecodes.KEY_LEFT,),
     "fast forward": (ecodes.KEY_RIGHT,),
     "forward": (ecodes.KEY_RIGHT,),
+    # Pistes pendant la lecture : mpv associe « v » à l'affichage des
+    # sous-titres, « j » à la piste de sous-titres et « a » à la piste audio.
+    # Peu de téléviseurs exposent une touche « sous-titres » en CEC : les
+    # touches de couleur servent de repli, jaune pour les sous-titres.
+    "sub picture": (ecodes.KEY_V,),
+    "subtitle": (ecodes.KEY_V,),
+    "subtitles": (ecodes.KEY_V,),
+    "closed caption": (ecodes.KEY_V,),
+    "f4 (yellow)": (ecodes.KEY_V,),
+    "yellow": (ecodes.KEY_V,),
+    "f3 (green)": (ecodes.KEY_J,),
+    "green": (ecodes.KEY_J,),
+    "sound select": (ecodes.KEY_A,),
+    "audio language": (ecodes.KEY_A,),
+    "f2 (red)": (ecodes.KEY_A,),
+    "red": (ecodes.KEY_A,),
 }
 
 PRESS = re.compile(r"key pressed:\s*([^\r\n(]+)", re.IGNORECASE)
