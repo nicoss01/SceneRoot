@@ -17,6 +17,9 @@ import { useSeriesEpisodes } from './hooks/useSeriesEpisodes';
 import { usePlayerChrome } from './hooks/usePlayerChrome';
 import { useResolvedMedia } from './hooks/useResolvedMedia';
 import { usePreferences } from './hooks/usePreferences';
+import { useOpinion } from './hooks/useOpinion';
+import { nextInDirection, type Direction } from './lib/spatial';
+import { useWatched } from './context/watched';
 import { useEscapeClose } from './hooks/useEscapeClose';
 import { useModalFocus } from './hooks/useModalFocus';
 import { WatchedContext } from './context/watched';
@@ -194,6 +197,16 @@ function DetailPage({profile}:{profile:Profile}) {
   const isSeries=item.kind==='serie';
   const [downloadMode,setDownloadMode]=useState<'later'|'play'|null>(null);const [chosenVersion,setChosenVersion]=useState<string|undefined>();
   const prefs=usePreferences(profile.id);const isFavorite=prefs.favorites.has(item.id);const isHidden=prefs.hidden.has(item.id);
+  const seenFromHistory=useWatched().has(item.id);
+  const opinion=useOpinion(profile.id,item.id,seenFromHistory);
+  const [refreshing,setRefreshing]=useState(false);const [refreshMessage,setRefreshMessage]=useState('');
+  // Recharge les métadonnées puis réaffiche la fiche avec les données fraîches.
+  const refreshMedia=async()=>{setRefreshing(true);setRefreshMessage('');try{
+    const response=await fetch(`/api/media/${encodeURIComponent(item.id)}/refresh`,{method:'POST'});
+    const payload=await response.json().catch(()=>({})) as {error?:string};
+    if(!response.ok)throw new Error(payload.error??`Échec (${response.status})`);
+    window.location.reload();
+  }catch(cause){setRefreshMessage((cause as Error).message);setRefreshing(false)}};
   const {detail}=useLibraryGroup(id,profile.id,isLocal);
   const series=useSeriesEpisodes(id,profile.id,isSeries,item.title,item.art);
   const richEpisodes=series.seasons.flatMap(season=>season.episodes);
@@ -215,11 +228,23 @@ function DetailPage({profile}:{profile:Profile}) {
     <div className="detail__symbol">{item.symbol}<i/></div><div className="detail__content"><span className="eyebrow">{item.kind === 'film' ? 'FILM' : 'SÉRIE'} · {item.year}</span><h1>{item.title}</h1>
     <div className="detail__meta"><Star fill="currentColor"/> {item.rating>0?`${item.rating}/10`:'Non noté'} <span>{item.duration}</span><span>{item.quality}</span></div><p>{item.description}</p><div className="detail__genres">{item.genres.map(g=><span key={g}>{g}</span>)}</div>{item.sourceUrl&&<a className="source-link" href={item.sourceUrl} target="_blank" rel="noreferrer">Informations : {item.informationSource??(item.source==='tvmaze'?'TVmaze':item.source==='wikipedia'?'Wikipédia':'TMDB')}</a>}
     <div className="actions">{isLocal?(hasProgress?<><button ref={primaryActionRef} className="primary focusable" onClick={()=>navigate(`/player/${playTarget}`)}><Play fill="currentColor"/> Reprendre{episodeLabel}</button><button className="secondary focusable" onClick={()=>navigate(`/player/${playTarget}?restart=1`)}><RotateCcw/> Lire depuis le début</button></>:<button ref={primaryActionRef} className="primary focusable" onClick={()=>navigate(`/player/${playTarget}`)}><Play fill="currentColor"/> Lire{episodeLabel}</button>):<><button ref={primaryActionRef} className="primary focusable" onClick={()=>setDownloadMode('play')}><Play fill="currentColor"/> Télécharger et lancer la lecture</button><button className="secondary focusable" onClick={()=>setDownloadMode('later')}><Download/> Télécharger pour plus tard</button></>}<button className={`icon-btn focusable ${isFavorite?'is-fav':''}`} title={isFavorite?'Retirer des favoris':'Ajouter aux favoris'} onClick={()=>void prefs.set(item.id,{favorite:!isFavorite})}><Heart fill={isFavorite?'currentColor':'none'}/></button><button className="icon-btn focusable" title={isHidden?'Ne plus masquer':'Masquer ce contenu'} onClick={()=>void prefs.set(item.id,{hidden:!isHidden})}>{isHidden?<Eye/>:<EyeOff/>}</button></div>
+    <div className="opinion"><span className="opinion-label">Votre avis</span>
+      <div className="opinion-stars">{[2,4,6,8,10].map(value=><button key={value} className={`opinion-star focusable ${(opinion.score??0)>=value?'is-on':''}`} title={`Noter ${value}/10`} aria-label={`Noter ${value} sur 10`} onClick={()=>void opinion.rate(value)}><Star fill={(opinion.score??0)>=value?'currentColor':'none'}/></button>)}</div>
+      <span className="opinion-score">{opinion.score!==null?`${opinion.score}/10`:'Pas encore noté'}</span>
+      <button className={`chip focusable ${opinion.seen?'is-on':''}`} onClick={()=>void opinion.markSeen(!opinion.seen)}><Eye/> {opinion.seen?'Déjà vu':'Je l’ai déjà vu'}</button>
+      <button className="chip focusable" onClick={()=>void refreshMedia()} disabled={refreshing}><RefreshCw className={refreshing?'spin':''}/> {refreshing?'Actualisation…':'Recharger les données'}</button>
+      {refreshMessage&&<span className="opinion-error">{refreshMessage}</span>}
+    </div>
     {item.kind==='film'&&filmVersions.length>1&&<div className="versions"><h3>{filmVersions.length} versions disponibles</h3><div className="version-list">{filmVersions.map(version=><button className={`version focusable ${activeVersion===version.id?'is-selected':''}`} key={version.id} onClick={()=>setChosenVersion(version.id)}>{versionLabel(version)}{activeVersion===version.id&&<Check/>}</button>)}</div></div>}
     {downloadMode&&<DownloadPanel item={item} priority={downloadMode==='play'} onQueued={downloadMode==='play'?torrentId=>{setDownloadMode(null);navigate(torrentId!=null?`/stream/${torrentId}`:'/downloads')}:undefined} onClose={()=>setDownloadMode(null)}/>}
     {isSeries&&(series.loading||series.seasons.length>0)&&<div className="episodes"><div className="episodes-head"><h2>Saisons et épisodes</h2>{series.source&&<span>Infos épisodes : {series.source}</span>}</div>{series.loading&&!series.seasons.length&&<div className="library-loading"><i/>Chargement des épisodes…</div>}{series.seasons.map(season=><div className="season" key={season.season}><h3>Saison {season.season} · {season.episodes.length} épisode{season.episodes.length>1?'s':''}</h3><div className="episode-cards">{season.episodes.map(episode=>{const playable=isLocal&&episode.playable!==false;return <button className={`episode-card focusable ${episode.id===nextId&&playable?'is-next':''}`} key={episode.id} disabled={!playable} onClick={()=>playable&&navigate(`/player/${episode.id}`)}><div className="episode-still" style={{'--a':item.palette[0],'--b':item.palette[1]} as React.CSSProperties}>{episode.still?<img src={episode.still} alt="" loading="lazy" decoding="async" onError={event=>{event.currentTarget.style.display='none'}}/>:<span>{item.symbol}</span>}{playable&&<span className="episode-play"><Play size={18} fill="currentColor"/></span>}{episode.progress>0.02&&<i className="episode-progress" style={{width:`${Math.min(100,Math.round(episode.progress*100))}%`}}/>}</div><div className="episode-body"><strong>E{String(episode.episode).padStart(2,'0')} · {episode.title}{episode.id===nextId&&playable&&<em> · à suivre</em>}{episode.versions>1&&<em> · {episode.versions} versions</em>}</strong>{episode.overview&&<p>{episode.overview}</p>}</div></button>})}</div></div>)}</div>}</div>
   </div>;
 }
+
+// On ne propose de noter qu'à la fin d'un film : quitter au bout de vingt
+// minutes n'est pas un avis sur l'œuvre.
+const RATE_WINDOW_SECONDS=600;
+function reachedEnding(position:number,duration:number){return duration>0&&position>=duration-RATE_WINDOW_SECONDS}
 
 function PlayerPage({profile}:{profile:Profile}) {
   const { id } = useParams(); const navigate=useNavigate(); const [searchParams]=useSearchParams(); const restart=searchParams.get('restart')==='1'; const {item,isLocal:localMedia}=useResolvedMedia(id); const isLocal=localMedia&&Boolean(id);
@@ -236,8 +261,8 @@ function PlayerPage({profile}:{profile:Profile}) {
   const advance=useCallback((target:string)=>{persist(true);setPanel(null);navigate(`/player/${target}`)},[persist,navigate]);
   // mpv s'est arrêté (fin du média ou « Retour » sur la vidéo) : on enchaîne sur
   // l'épisode suivant s'il y en a un, sinon on quitte le lecteur.
-  useEffect(()=>{const running=Boolean(status?.running);if(wasRunningRef.current&&!running){if(nextEp&&durationRef.current>0)advance(nextEp.id);else{persist(true);navigate(`/rate/${item.id}`)}}wasRunningRef.current=running},[status,nextEp,advance,persist,navigate,item.id]);
-  const finish=async()=>{persist(true);await control('stop').catch(()=>{});navigate(`/rate/${item.id}`)};
+  useEffect(()=>{const running=Boolean(status?.running);if(wasRunningRef.current&&!running){if(nextEp&&durationRef.current>0)advance(nextEp.id);else{persist(true);{if(reachedEnding(positionRef.current,durationRef.current))navigate(`/rate/${item.id}`);else navigate(-1)}}}wasRunningRef.current=running},[status,nextEp,advance,persist,navigate,item.id]);
+  const finish=async()=>{persist(true);await control('stop').catch(()=>{});{if(reachedEnding(positionRef.current,durationRef.current))navigate(`/rate/${item.id}`);else navigate(-1)}};
   const leave=()=>{persist(true);void control('stop').catch(()=>{});navigate(-1)};
   const running=Boolean(status?.running);const playing=status?.playing??true;const position=status?.position??0;const duration=status?.duration??0;
   const pct=duration>0?Math.min(100,(position/duration)*100):0;
@@ -265,7 +290,7 @@ function StreamPlayerPage({profile}:{profile:Profile}) {
   useEffect(()=>{if(!Number.isFinite(torrentId))return;let active=true;let timer:ReturnType<typeof setTimeout>|undefined;const attempt=async()=>{try{const response=await fetch(`/api/downloads/${torrentId}/play`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});const data=await response.json().catch(()=>({})) as {ready?:boolean;buffered?:number;name?:string;mediaId?:string;error?:string};if(!active)return;if(!response.ok){setErrorMsg(data.error??'Lecture indisponible');setPhase('error');return}setBuffered(data.buffered??0);if(data.name)setName(data.name);if(data.ready){mediaIdRef.current=data.mediaId??'';setPhase('playing')}else{timer=setTimeout(()=>void attempt(),2000)}}catch{if(active){setErrorMsg('Serveur indisponible');setPhase('error')}}};void attempt();return()=>{active=false;if(timer)clearTimeout(timer)}},[torrentId]);
   useEffect(()=>{if(phase!=='playing')return;let active=true;const tick=async()=>{try{const response=await fetch('/api/player/status');if(!response.ok)return;const next=await response.json() as PlayerStatus;if(!active)return;setStatus(next);if(next.running){positionRef.current=next.position??0;durationRef.current=next.duration??0}}catch{}};void tick();const interval=setInterval(()=>void tick(),1000);return()=>{active=false;clearInterval(interval)}},[phase]);
   useEffect(()=>{if(phase!=='playing')return;const interval=setInterval(()=>persist(),10000);const onHide=()=>persist(true);window.addEventListener('pagehide',onHide);return()=>{clearInterval(interval);window.removeEventListener('pagehide',onHide);persist(true)}},[phase,persist]);
-  const finish=async()=>{persist(true);await control('stop').catch(()=>{});navigate(mediaIdRef.current?`/rate/${mediaIdRef.current}`:'/downloads')};
+  const finish=async()=>{persist(true);await control('stop').catch(()=>{});navigate(mediaIdRef.current&&reachedEnding(positionRef.current,durationRef.current)?`/rate/${mediaIdRef.current}`:'/downloads')};
   const running=Boolean(status?.running);const playing=status?.playing??true;const position=status?.position??0;const duration=status?.duration??0;
   const leaveStream=()=>{persist(true);void control('stop').catch(()=>{});navigate(-1)};
   const chromeVisible=usePlayerChrome({enabled:phase==='playing',onSeekBy:delta=>{if(running&&duration>0)void control('seek-to',Math.min(duration,Math.max(0,positionRef.current+delta)))},onTogglePlay:()=>{if(running)void control(playing?'pause':'play')},onExit:leaveStream});
@@ -475,7 +500,26 @@ function App() {
     window.addEventListener('mousemove',wake); window.addEventListener('mousedown',wake);
     return()=>{ clearTimeout(timer); window.removeEventListener('mousemove',wake); window.removeEventListener('mousedown',wake); document.body.classList.remove('hide-cursor') };
   },[]);
-  useEffect(()=>{ const handle=(e:KeyboardEvent)=>{ if(!['ArrowRight','ArrowLeft','ArrowUp','ArrowDown'].includes(e.key))return; /* Une modale ouverte confine la navigation directionnelle à son contenu. */ const scope=[...document.querySelectorAll<HTMLElement>('.modal-backdrop')].pop(); const els=[...(scope??document).querySelectorAll<HTMLElement>('button:not([disabled]),a[href],input,select')].filter(x=>x.offsetParent!==null); const current=document.activeElement as HTMLElement; const r=current?.getBoundingClientRect(); if(!r){els[0]?.focus();return} const horizontal=e.key==='ArrowLeft'||e.key==='ArrowRight'; const sign=e.key==='ArrowLeft'||e.key==='ArrowUp'?-1:1; let best:HTMLElement|undefined,score=Infinity; for(const el of els){if(el===current)continue;const q=el.getBoundingClientRect();const dx=q.left+q.width/2-(r.left+r.width/2),dy=q.top+q.height/2-(r.top+r.height/2);const primary=horizontal?dx:dy;if(Math.sign(primary)!==sign)continue;const secondary=horizontal?dy:dx;const s=Math.abs(primary)+Math.abs(secondary)*2;if(s<score){score=s;best=el}} if(best){e.preventDefault();best.focus()}}; addEventListener('keydown',handle); return()=>removeEventListener('keydown',handle)},[]);
+  // Navigation directionnelle à la télécommande : on parcourt les éléments
+  // visibles, en restant dans la modale ouverte s'il y en a une.
+  useEffect(()=>{
+    const handle=(event:KeyboardEvent)=>{
+      const direction=event.key as Direction;
+      if(!['ArrowRight','ArrowLeft','ArrowUp','ArrowDown'].includes(direction))return;
+      const scope=[...document.querySelectorAll<HTMLElement>('.modal-backdrop')].pop()??document;
+      const elements=[...scope.querySelectorAll<HTMLElement>('button:not([disabled]),a[href],input:not([type="hidden"]),select,textarea,[tabindex]:not([tabindex="-1"])')].filter(element=>element.offsetParent!==null);
+      const current=document.activeElement as HTMLElement|null;
+      const box=current?.getBoundingClientRect();
+      if(!box||!elements.includes(current as HTMLElement)){elements[0]?.focus();return}
+      // Dans un champ de saisie, les flèches horizontales déplacent le curseur.
+      const editing=current instanceof HTMLInputElement||current instanceof HTMLTextAreaElement;
+      if(editing&&(direction==='ArrowLeft'||direction==='ArrowRight'))return;
+      const target=nextInDirection(box,elements.filter(element=>element!==current).map(element=>({item:element,box:element.getBoundingClientRect()})),direction);
+      if(target){event.preventDefault();target.focus()}
+    };
+    addEventListener('keydown',handle);
+    return()=>removeEventListener('keydown',handle);
+  },[]);
   if(booting||setupComplete===null||!profilesLoaded)return <BootScreen/>;
   const needsSetup=savedProfiles.length===0;
   if(needsSetup&&!profile)return <SetupWizard onDone={created=>{setSetupComplete(true);if(created.length)setSavedProfiles(current=>[...current,...created.filter(item=>!current.some(existing=>existing.id===item.id))]);void refetchProfiles()}}/>;

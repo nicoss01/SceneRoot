@@ -618,3 +618,11 @@ body.hide-cursor, body.hide-cursor * { cursor: none !important; }
 .sync-progress { height: 8px; margin: 12px 0 6px; overflow: hidden; background: rgba(12,201,238,.14); border-radius: 999px; }
 .sync-progress i { display: block; height: 100%; background: linear-gradient(90deg,var(--cyan),#7dd3fc); border-radius: 999px; transition: width .6s ease; }
 .sync-dates { display: block; margin: 10px 0; color: var(--muted); }
+.opinion { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 22px 0 0; }
+.opinion-label { color: var(--muted); font-size: 15px; }
+.opinion-stars { display: flex; gap: 4px; }
+.opinion-star { padding: 7px; background: transparent; border: 0; color: #5b7590; }
+.opinion-star.is-on { color: #fbbf24; }
+.opinion-star:focus-visible { outline: 2px solid var(--cyan); border-radius: 8px; }
+.opinion-score { color: var(--muted); font-size: 14px; }
+.opinion-error { color: #ff8a95; font-size: 14px; }

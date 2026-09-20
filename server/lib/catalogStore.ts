@@ -229,6 +229,11 @@ export class CatalogStore {
     else this.db.prepare('DELETE FROM catalog_episodes WHERE sync_token IS NOT NULL AND sync_token <> ?').run(syncToken);
   }
 
+  /** Oublie les métadonnées françaises d'un titre pour forcer leur récupération. */
+  forgetLocalized(imdbId: string): void {
+    this.db?.prepare('DELETE FROM catalog_localized WHERE imdb_id = ?').run(imdbId);
+  }
+
   upsertLocalized(value: LocalizedMetadata): void {
     if (!this.db) return;
     const checkedAt=value.checkedAt??new Date().toISOString();

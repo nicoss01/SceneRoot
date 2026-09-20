@@ -293,6 +293,42 @@ app.put<{Params:{profileId:string;mediaId:string};Body:{position:number;duration
 app.get<{Params:{profileId:string}}>('/api/playback/:profileId',async request=>{const db=loadDb();const groups=groupLibrary(db.library);const prefix=`${request.params.profileId}:`;return Object.entries(db.playback).filter(([key])=>key.startsWith(prefix)).map(([key,value])=>{const entry=playbackEntry(value);if(!entry)return null;const mediaId=key.slice(prefix.length);const group=groupForMedia(groups,mediaId);if(!group)return null;const progress=entry.duration>0?entry.position/entry.duration:0;return{group,mediaId,position:entry.position,duration:entry.duration,progress,updatedAt:entry.updatedAt,completed:progress>=0.92}}).filter((entry): entry is NonNullable<typeof entry>=>entry!==null&&!entry.completed).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt))});
 app.get<{Params:{profileId:string}}>('/api/history/:profileId',async request=>{const db=loadDb();const groups=groupLibrary(db.library);const prefix=`${request.params.profileId}:`;const seen=new Map<string,{group:LibraryGroup;mediaId:string;progress:number;position:number;duration:number;updatedAt:string;completed:boolean;rating?:number;tags?:string[]}>();for(const[key,value]of Object.entries(db.playback)){if(!key.startsWith(prefix))continue;const entry=playbackEntry(value);if(!entry)continue;const mediaId=key.slice(prefix.length);const group=groupForMedia(groups,mediaId);if(!group)continue;const progress=entry.duration>0?entry.position/entry.duration:0;seen.set(group.id,{group,mediaId,progress,position:entry.position,duration:entry.duration,updatedAt:entry.updatedAt,completed:progress>=0.92})}for(const rating of db.ratings.filter(r=>r.profileId===request.params.profileId)){const group=groupForMedia(groups,rating.mediaId);if(!group)continue;const existing=seen.get(group.id);if(existing){existing.rating=rating.score;existing.tags=rating.tags;if(rating.at>existing.updatedAt)existing.updatedAt=rating.at}else seen.set(group.id,{group,mediaId:rating.mediaId,progress:0,position:0,duration:0,updatedAt:rating.at,completed:true,rating:rating.score,tags:rating.tags})}return[...seen.values()].sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt))});
 app.get<{Params:{profileId:string}}>('/api/ratings/:profileId',async request=>loadDb().ratings.filter(rating=>rating.profileId===request.params.profileId));
+/**
+ * Oublie une progression : sert au bouton « déjà vu » de la fiche, qui écrit
+ * une progression complète et doit pouvoir être annulé.
+ */
+app.delete<{Params:{profileId:string;mediaId:string}}>('/api/playback/:profileId/:mediaId',async request=>{const db=loadDb();const key=`${request.params.profileId}:${request.params.mediaId}`;const existed=key in db.playback;delete db.playback[key];saveDb(db);return{ok:true,removed:existed}});
+/** Supprime du cache les métadonnées associées à un identifiant. */
+function purgeCacheFor(token:string){let removed=0;try{for(const file of readdirSync(cacheDir))if(file.includes(token)){try{rmSync(join(cacheDir,file));removed++}catch{/* fichier déjà parti */}}}catch{/* pas de cache */}return removed}
+/**
+ * Force la récupération des informations d'un média : métadonnées françaises du
+ * catalogue, ou réidentification d'un titre de la médiathèque.
+ */
+app.post<{Params:{id:string}}>('/api/media/:id/refresh',async(request,reply)=>{
+  const id=request.params.id;
+  const imdb=/^imdb-(?:film|serie)-(tt\d+)$/.exec(id);
+  if(imdb){
+    const row=catalogStore.get(imdb[1]);
+    if(!row)return reply.code(404).send({error:'Titre absent du catalogue local'});
+    catalogStore.forgetLocalized(imdb[1]);
+    purgeCacheFor(imdb[1]);
+    const key=tmdbApiKey();
+    try{await (key?enrichTmdbRow(catalogStore.get(imdb[1])??row,key):enrichWikipediaFallback(catalogStore.get(imdb[1])??row))}
+    catch(error){app.log.warn({error,id},'Media refresh failed')}
+    const fresh=catalogStore.get(imdb[1]);
+    return{ok:true,scope:'catalogue',item:fresh?localCatalogItem(fresh):undefined};
+  }
+  const db=loadDb();
+  const item=db.library.find(entry=>entry.id===id);
+  if(item){
+    // Toutes les versions du même titre partagent la fiche : on les réinitialise ensemble.
+    for(const sibling of db.library.filter(entry=>entry.kind===item.kind&&entry.year===item.year&&comparableTitle(entry.title)===comparableTitle(item.title)))sibling.metadata=undefined;
+    saveDb(db);
+    await enrichLibrary(12);
+    return{ok:true,scope:'médiathèque'};
+  }
+  return{ok:true,scope:'cache',removed:purgeCacheFor(id)};
+});
 app.get<{Params:{profileId:string}}>('/api/watched/:profileId',async request=>{const db=loadDb();const prefix=`${request.params.profileId}:`;const ids=new Set<string>();for(const[key,raw]of Object.entries(db.playback)){if(!key.startsWith(prefix))continue;const entry=playbackEntry(raw);if(entry&&entry.duration>0&&entry.position/entry.duration>=0.92)ids.add(key.slice(prefix.length))}for(const rating of db.ratings)if(rating.profileId===request.params.profileId)ids.add(rating.mediaId);return[...ids]});
 app.get<{Params:{profileId:string}}>('/api/preferences/:profileId',async request=>{const db=loadDb();const pid=request.params.profileId;return{favorites:db.favorites.filter(entry=>entry.profileId===pid).map(entry=>entry.mediaId),hidden:db.hidden.filter(entry=>entry.profileId===pid).map(entry=>entry.mediaId)}});
 app.put<{Params:{profileId:string;mediaId:string};Body:{favorite?:boolean;hidden?:boolean}}>('/api/preferences/:profileId/:mediaId',{schema:{body:{type:'object',properties:{favorite:{type:'boolean'},hidden:{type:'boolean'}}}}},async request=>{const db=loadDb();const{profileId,mediaId}=request.params;const{favorite,hidden}=request.body;if(favorite!==undefined){db.favorites=db.favorites.filter(entry=>!(entry.profileId===profileId&&entry.mediaId===mediaId));if(favorite)db.favorites.push({profileId,mediaId,at:new Date().toISOString()})}if(hidden!==undefined){db.hidden=db.hidden.filter(entry=>!(entry.profileId===profileId&&entry.mediaId===mediaId));if(hidden)db.hidden.push({profileId,mediaId,at:new Date().toISOString()})}saveDb(db);return{ok:true}});
