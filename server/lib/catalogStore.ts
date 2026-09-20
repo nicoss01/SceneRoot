@@ -29,7 +29,7 @@ export type LocalizedMetadata = {
   tmdbId?: number;
   tvmazeId?: number;
   wikidataId?: string;
-  source: 'tmdb' | 'tvmaze' | 'wikidata' | 'wikipedia' | 'none';
+  source: 'tmdb' | 'omdb' | 'tvmaze' | 'wikidata' | 'wikipedia' | 'none';
   checkedAt?: string;
 };
 

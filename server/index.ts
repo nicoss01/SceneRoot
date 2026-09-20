@@ -26,7 +26,7 @@ type Rating = { profileId: string; mediaId: string; score: number; tags: string[
 type ProfileRecord = { id:string; name:string; ageLimit:number; avatar:string; accent:string; pinHash?:string; createdAt:string };
 type MediaMetadata = { provider:'tmdb'|'tvmaze'|'wikipedia'; providerId:number|string; title:string; originalTitle?:string; overview?:string; poster?:string; backdrop?:string; genres?:string[]; releaseDate?:string; ageRating?:string; runtime?:number; sourceUrl?:string; informationSource?:string };
 type PlaybackEntry = { position:number; duration:number; updatedAt:string; dismissed?:boolean };
-type Settings = { minFreeGb?:number; preferredQuality?:string; preferredAudio?:AudioPreference; preferredLanguages?:string[]; preferHdr?:boolean; torznabSources?:TorznabSource[]; setupComplete?:boolean; adminToken?:string; tmdbApiKey?:string; catalogSyncEnabled?:boolean };
+type Settings = { minFreeGb?:number; omdbApiKey?:string; preferredQuality?:string; preferredAudio?:AudioPreference; preferredLanguages?:string[]; preferHdr?:boolean; torznabSources?:TorznabSource[]; setupComplete?:boolean; adminToken?:string; tmdbApiKey?:string; catalogSyncEnabled?:boolean };
 type GuestSession = { id:string; ageLimit:number; createdAt:string; expiresAt:number|null; ephemeral:boolean };
 type MediaPref = { profileId:string; mediaId:string; at:string };
 type Db = { profiles: ProfileRecord[]; library: LibraryItem[]; ratings: Rating[]; playback: Record<string, PlaybackEntry|number>; settings: Settings; guests: GuestSession[]; favorites: MediaPref[]; hidden: MediaPref[] };
@@ -142,9 +142,13 @@ function loadDb(): Db {
 }
 function saveDb(db: Db) { store.save(db as unknown as StoredDb); }
 function tmdbApiKey(){return process.env.TMDB_API_KEY?.trim()||loadDb().settings.tmdbApiKey?.trim()||''}
+/** OMDb complète les fiches là où TMDB n'a rien : affiche, résumé, classification. */
+function omdbApiKey(){return process.env.OMDB_API_KEY?.trim()||loadDb().settings.omdbApiKey?.trim()||''}
 function maskSecret(value:string){return value.length<8?'••••':`${value.slice(0,4)}••••${value.slice(-4)}`}
 const tmdbConfiguredByEnvironment=Boolean(process.env.TMDB_API_KEY?.trim());
+const omdbConfiguredByEnvironment=Boolean(process.env.OMDB_API_KEY?.trim());
 if(!tmdbConfiguredByEnvironment){const savedKey=loadDb().settings.tmdbApiKey?.trim();if(savedKey)process.env.TMDB_API_KEY=savedKey}
+if(!omdbConfiguredByEnvironment){const savedKey=loadDb().settings.omdbApiKey?.trim();if(savedKey)process.env.OMDB_API_KEY=savedKey}
 function purgeExpiredGuests(clearEphemeral=false){const db=loadDb();const now=Date.now();const keep=db.guests.filter(guest=>(!clearEphemeral||!guest.ephemeral)&&(guest.expiresAt===null||guest.expiresAt>now));if(keep.length===db.guests.length)return;const removed=new Set(db.guests.filter(guest=>!keep.includes(guest)).map(guest=>guest.id));db.ratings=db.ratings.filter(rating=>!removed.has(rating.profileId));for(const key of Object.keys(db.playback))if(removed.has(key.slice(0,key.indexOf(':'))))delete db.playback[key];db.guests=keep;saveDb(db)}
 function hashPin(pin:string){const salt=randomBytes(16);const digest=scryptSync(pin,salt,32);return`${salt.toString('hex')}:${digest.toString('hex')}`}
 function verifyPin(pin:string,stored:string){try{const[saltHex,digestHex]=stored.split(':');const expected=Buffer.from(digestHex,'hex');const actual=scryptSync(pin,Buffer.from(saltHex,'hex'),expected.length);return timingSafeEqual(actual,expected)}catch{return false}}
@@ -506,8 +510,21 @@ const audioPreferences:Record<AudioPreference,{languages:string[];term?:string;l
   any:{languages:[],label:'Peu importe'},
 };
 function audioPreference(value?:string):AudioPreference{return value==='vostfr'||value==='vost'||value==='any'?value:'vf'}
-app.get('/api/settings',async()=>{const s=loadDb().settings;const key=tmdbApiKey();return{minFreeGb:s.minFreeGb??Number(process.env.SCENEROOT_MIN_FREE_GB??5),preferredQuality:s.preferredQuality??'1080p',preferredAudio:audioPreference(s.preferredAudio),preferredLanguages:s.preferredLanguages??audioPreferences[audioPreference(s.preferredAudio)].languages,preferHdr:Boolean(s.preferHdr),setupComplete:Boolean(s.setupComplete),catalogSyncEnabled:s.catalogSyncEnabled??false,tmdb:{configured:Boolean(key),source:tmdbConfiguredByEnvironment?'environment':key?'settings':'none',maskedKey:key?maskSecret(key):undefined},envSources:envSources().map(source=>({id:source.id,name:source.name})),sources:(s.torznabSources??[]).map(maskSource)}});
-app.put<{Body:Partial<Settings>&{tmdbApiKey?:string|null}}>('/api/settings',{schema:{body:{type:'object',properties:{minFreeGb:{type:'number',minimum:0,maximum:100000},preferredQuality:{type:'string'},preferredAudio:{type:'string',enum:['vf','vostfr','vost','any']},preferredLanguages:{type:'array',items:{type:'string'}},preferHdr:{type:'boolean'},setupComplete:{type:'boolean'},catalogSyncEnabled:{type:'boolean'},tmdbApiKey:{type:['string','null'],maxLength:512}}}}},async(request,reply)=>{const db=loadDb();if(request.body.minFreeGb!==undefined)db.settings.minFreeGb=Number(request.body.minFreeGb);if(request.body.preferredQuality!==undefined)db.settings.preferredQuality=String(request.body.preferredQuality);if(request.body.preferredAudio!==undefined){const choice=audioPreference(request.body.preferredAudio);db.settings.preferredAudio=choice;/* les langues suivent la préférence, sauf réglage explicite ensuite */db.settings.preferredLanguages=audioPreferences[choice].languages}if(Array.isArray(request.body.preferredLanguages))db.settings.preferredLanguages=request.body.preferredLanguages.map(String);if(request.body.preferHdr!==undefined)db.settings.preferHdr=Boolean(request.body.preferHdr);if(request.body.setupComplete!==undefined)db.settings.setupComplete=Boolean(request.body.setupComplete);if(request.body.catalogSyncEnabled!==undefined)db.settings.catalogSyncEnabled=Boolean(request.body.catalogSyncEnabled);if(request.body.tmdbApiKey!==undefined){if(tmdbConfiguredByEnvironment)return reply.code(409).send({error:'La clé TMDB est imposée par la variable d’environnement TMDB_API_KEY.'});const key=String(request.body.tmdbApiKey??'').trim();if(key){try{const response=await fetch(`https://api.themoviedb.org/3/configuration?api_key=${encodeURIComponent(key)}`,{headers:{Accept:'application/json'},signal:AbortSignal.timeout(12_000)});if(!response.ok)return reply.code(400).send({error:'Clé API TMDB v3 invalide.'})}catch{return reply.code(502).send({error:'TMDB est injoignable, la clé n’a pas été enregistrée.'})}db.settings.tmdbApiKey=key;process.env.TMDB_API_KEY=key}else{delete db.settings.tmdbApiKey;delete process.env.TMDB_API_KEY}}saveDb(db);if(request.body.catalogSyncEnabled&&!catalogStore.count())void startImdbSync();return{ok:true}});
+app.get('/api/settings',async()=>{const s=loadDb().settings;const key=tmdbApiKey();const omdbKey=omdbApiKey();return{minFreeGb:s.minFreeGb??Number(process.env.SCENEROOT_MIN_FREE_GB??5),preferredQuality:s.preferredQuality??'1080p',preferredAudio:audioPreference(s.preferredAudio),preferredLanguages:s.preferredLanguages??audioPreferences[audioPreference(s.preferredAudio)].languages,preferHdr:Boolean(s.preferHdr),setupComplete:Boolean(s.setupComplete),catalogSyncEnabled:s.catalogSyncEnabled??false,tmdb:{configured:Boolean(key),source:tmdbConfiguredByEnvironment?'environment':key?'settings':'none',maskedKey:key?maskSecret(key):undefined},omdb:{configured:Boolean(omdbKey),source:omdbConfiguredByEnvironment?'environment':omdbKey?'settings':'none',maskedKey:omdbKey?maskSecret(omdbKey):undefined},envSources:envSources().map(source=>({id:source.id,name:source.name})),sources:(s.torznabSources??[]).map(maskSource)}});
+app.put<{Body:Partial<Settings>&{tmdbApiKey?:string|null}}>('/api/settings',{schema:{body:{type:'object',properties:{minFreeGb:{type:'number',minimum:0,maximum:100000},preferredQuality:{type:'string'},preferredAudio:{type:'string',enum:['vf','vostfr','vost','any']},preferredLanguages:{type:'array',items:{type:'string'}},preferHdr:{type:'boolean'},setupComplete:{type:'boolean'},catalogSyncEnabled:{type:'boolean'},tmdbApiKey:{type:['string','null'],maxLength:512},omdbApiKey:{type:['string','null'],maxLength:512}}}}},async(request,reply)=>{const db=loadDb();if(request.body.minFreeGb!==undefined)db.settings.minFreeGb=Number(request.body.minFreeGb);if(request.body.preferredQuality!==undefined)db.settings.preferredQuality=String(request.body.preferredQuality);if(request.body.preferredAudio!==undefined){const choice=audioPreference(request.body.preferredAudio);db.settings.preferredAudio=choice;/* les langues suivent la préférence, sauf réglage explicite ensuite */db.settings.preferredLanguages=audioPreferences[choice].languages}if(Array.isArray(request.body.preferredLanguages))db.settings.preferredLanguages=request.body.preferredLanguages.map(String);if(request.body.preferHdr!==undefined)db.settings.preferHdr=Boolean(request.body.preferHdr);if(request.body.setupComplete!==undefined)db.settings.setupComplete=Boolean(request.body.setupComplete);if(request.body.catalogSyncEnabled!==undefined)db.settings.catalogSyncEnabled=Boolean(request.body.catalogSyncEnabled);if(request.body.tmdbApiKey!==undefined){if(tmdbConfiguredByEnvironment)return reply.code(409).send({error:'La clé TMDB est imposée par la variable d’environnement TMDB_API_KEY.'});const key=String(request.body.tmdbApiKey??'').trim();if(key){try{const response=await fetch(`https://api.themoviedb.org/3/configuration?api_key=${encodeURIComponent(key)}`,{headers:{Accept:'application/json'},signal:AbortSignal.timeout(12_000)});if(!response.ok)return reply.code(400).send({error:'Clé API TMDB v3 invalide.'})}catch{return reply.code(502).send({error:'TMDB est injoignable, la clé n’a pas été enregistrée.'})}db.settings.tmdbApiKey=key;process.env.TMDB_API_KEY=key}else{delete db.settings.tmdbApiKey;delete process.env.TMDB_API_KEY}}if(request.body.omdbApiKey!==undefined){
+    if(omdbConfiguredByEnvironment)return reply.code(409).send({error:'Clé OMDb définie par l’environnement OMDB_API_KEY.'});
+    const key=String(request.body.omdbApiKey??'').trim();
+    if(key){
+      // On valide la clé sur un titre connu : OMDb répond « False » si elle est refusée.
+      try{
+        const response=await fetch(`https://www.omdbapi.com/?i=tt0111161&apikey=${encodeURIComponent(key)}`,{headers:{Accept:'application/json'},signal:AbortSignal.timeout(12_000)});
+        const payload=await response.json().catch(()=>({})) as {Response?:string;Error?:string};
+        if(!response.ok||payload.Response==='False')return reply.code(400).send({error:payload.Error??'Clé API OMDb invalide.'});
+      }catch{return reply.code(502).send({error:'OMDb est injoignable, la clé n’a pas été enregistrée.'})}
+      db.settings.omdbApiKey=key;process.env.OMDB_API_KEY=key;
+    }else{delete db.settings.omdbApiKey;delete process.env.OMDB_API_KEY}
+  }
+  saveDb(db);if(request.body.catalogSyncEnabled&&!catalogStore.count())void startImdbSync();return{ok:true}});
 app.post<{Body:Partial<TorznabSource>}>('/api/sources',{schema:{body:{type:'object',required:['name','url'],properties:{name:{type:'string'},url:{type:'string'},apiKey:{type:'string'},categories:{type:'string'}}}}},async(request,reply)=>{const source=sanitizeSource(request.body,randomUUID());if(!source)return reply.code(400).send({error:'Source invalide : nom et URL http(s) requis'});const db=loadDb();db.settings.torznabSources=[...(db.settings.torznabSources??[]),source];saveDb(db);return reply.code(201).send(maskSource(source))});
 app.delete<{Params:{id:string}}>('/api/sources/:id',async request=>{const db=loadDb();const list=db.settings.torznabSources??[];const before=list.length;db.settings.torznabSources=list.filter(source=>source.id!==request.params.id);saveDb(db);return{ok:true,removed:before-(db.settings.torznabSources?.length??0)}});
 app.get<{Params:{id:string}}>('/api/media/:id', async (request, reply) => {
@@ -808,6 +825,31 @@ async function enrichTmdbRow(row:CatalogRow,key:string){
   try{const result=await cachedJson<{movie_results?:Record<string,unknown>[];tv_results?:Record<string,unknown>[]}>(`tmdb-find-${row.imdbId}`,url.toString(),30*24*60*60*1000);const hit=(path==='tv'?result.data.tv_results:result.data.movie_results)?.[0];if(!hit){catalogStore.upsertLocalized({imdbId:row.imdbId,source:'none'});return}const normalized=normalizeTmdb(hit,path);catalogStore.upsertLocalized({imdbId:row.imdbId,titleFr:normalized.title,overviewFr:normalized.overview,poster:normalized.poster,backdrop:normalized.backdrop,tmdbId:Number(normalized.providerId),source:'tmdb'})}catch(error){app.log.debug({error,imdbId:row.imdbId},'TMDB lazy enrichment failed')}
 }
 
+/**
+ * Complète une fiche avec OMDb : affiche, résumé et classification à partir de
+ * l'identifiant IMDb, que le catalogue local possède déjà. Les champs ne sont
+ * écrits que s'ils manquent (le stockage fusionne par COALESCE), donc un résumé
+ * français venu de TMDB n'est jamais remplacé par la version anglaise d'OMDb.
+ */
+async function enrichOmdbRow(row:CatalogRow,key:string){
+  if(row.poster&&row.overviewFr)return;
+  const url=new URL('https://www.omdbapi.com/');
+  url.searchParams.set('i',row.imdbId);url.searchParams.set('apikey',key);url.searchParams.set('plot','full');url.searchParams.set('r','json');
+  try{
+    const result=await cachedJson<{Response?:string;Title?:string;Plot?:string;Poster?:string;Rated?:string;Error?:string}>(`omdb-${row.imdbId}`,url.toString(),30*24*60*60*1000);
+    const data=result.data;
+    if(data.Response==='False'){app.log.debug({imdbId:row.imdbId,error:data.Error},'OMDb sans réponse');return}
+    const usable=(value?:string)=>value&&value!=='N/A'?value:undefined;
+    catalogStore.upsertLocalized({
+      imdbId:row.imdbId,
+      titleFr:usable(data.Title),
+      overviewFr:usable(data.Plot),
+      poster:usable(data.Poster),
+      ageRating:usable(data.Rated),
+      source:'omdb',
+    });
+  }catch(error){app.log.debug({error,imdbId:row.imdbId},'OMDb indisponible')}
+}
 async function enrichWikipediaFallback(row:CatalogRow){
   if(row.metadataCheckedAt)return;const url=new URL('https://fr.wikipedia.org/w/api.php');url.searchParams.set('action','query');url.searchParams.set('generator','search');url.searchParams.set('gsrsearch',`intitle:"${row.primaryTitle}" ${row.kind==='serie'?'série télévisée':'film'}${row.startYear?` ${row.startYear}`:''}`);url.searchParams.set('gsrnamespace','0');url.searchParams.set('gsrlimit','1');url.searchParams.set('prop','extracts|pageimages|info');url.searchParams.set('inprop','url');url.searchParams.set('exintro','1');url.searchParams.set('explaintext','1');url.searchParams.set('exchars','650');url.searchParams.set('piprop','thumbnail');url.searchParams.set('pithumbsize','780');url.searchParams.set('format','json');url.searchParams.set('formatversion','2');
   try{const result=await cachedJson<WikipediaResponse>(`wikipedia-rescue-${row.imdbId}`,url.toString(),30*24*60*60*1000);const page=Object.values(result.data.query?.pages??{})[0];catalogStore.upsertLocalized(page?{imdbId:row.imdbId,titleFr:page.title.replace(/\s*\([^)]*\)$/,''),overviewFr:page.extract,poster:page.thumbnail?.source,source:'wikipedia'}:{imdbId:row.imdbId,source:'none'})}catch(error){app.log.debug({error,imdbId:row.imdbId},'Wikipedia rescue summary failed')}
@@ -819,12 +861,23 @@ async function enrichWikidataIds(rows:CatalogRow[]){
 }
 
 async function localCatalog(page:number,limit:number,kind?:'film'|'serie',query='',genre='',recent=false):Promise<ProviderPage>{
-  let result=catalogStore.query({kind,query,genre,page,limit,sort:recent?'recent':'popular',maxYear:new Date().getFullYear()});const key=tmdbApiKey();const staleBefore=Date.now()-30*24*60*60*1000;const needs=result.items.filter(row=>key?row.metadataSource!=='tmdb'||!row.metadataCheckedAt||Date.parse(row.metadataCheckedAt)<staleBefore:!row.metadataCheckedAt||Date.parse(row.metadataCheckedAt)<staleBefore);
+  let result=catalogStore.query({kind,query,genre,page,limit,sort:recent?'recent':'popular',maxYear:new Date().getFullYear()});
+  const key=tmdbApiKey();const omdb=omdbApiKey();const staleBefore=Date.now()-30*24*60*60*1000;
+  // Une fiche est à compléter tant qu'il lui manque une affiche ou un résumé,
+  // ou que son dernier passage remonte à plus d'un mois.
+  const stale=(row:CatalogRow)=>!row.metadataCheckedAt||Date.parse(row.metadataCheckedAt)<staleBefore;
+  const needs=result.items.filter(row=>key?row.metadataSource!=='tmdb'||stale(row):omdb?!row.poster||!row.overviewFr||stale(row):stale(row));
+  /** TMDB pour le français, OMDb pour ce qui manque encore, Wikipédia à défaut. */
+  const enrichOne=async(row:CatalogRow)=>{
+    if(key)await enrichTmdbRow(row,key);
+    if(omdb){const after=catalogStore.get(row.imdbId)??row;if(!after.poster||!after.overviewFr)await enrichOmdbRow(after,omdb)}
+    else if(!key)await enrichWikipediaFallback(row);
+  };
   if(needs.length){
     // L'enrichissement interroge TMDB : on lui laisse un instant pour que les
     // titres français apparaissent tout de suite, puis on répond sans attendre.
     // Ce qui n'a pas abouti se termine en arrière-plan et servira au prochain affichage.
-    const running=needs.slice(0,Math.min(8,limit)).map(row=>key?enrichTmdbRow(row,key):enrichWikipediaFallback(row));
+    const running=needs.slice(0,Math.min(8,limit)).map(enrichOne);
     await Promise.race([Promise.allSettled(running),new Promise(resolve=>setTimeout(resolve,1200))]);
     result=catalogStore.query({kind,query,genre,page,limit,sort:recent?'recent':'popular',maxYear:new Date().getFullYear()});
   }
