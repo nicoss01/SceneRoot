@@ -60,6 +60,11 @@ if command -v dbus-run-session >/dev/null 2>&1; then
   LAUNCH=(dbus-run-session -- "${LAUNCH[@]}")
 fi
 
+# Le compositeur affiche un curseur au centre tant qu'aucune souris n'a bougé :
+# on le range dans un coin, hors du champ de vision.
+park_cursor() { sleep 4; python3 /opt/sceneroot/scripts/park-cursor.py >/dev/null 2>&1 || true; }
+park_cursor &
+
 while true; do
   "${LAUNCH[@]}" || true
   sleep 2

@@ -72,6 +72,7 @@ describe('requiresAdmin', () => {
     expect(requiresAdmin('DELETE', '/api/cache')).toBe(true);
     expect(requiresAdmin('POST', '/api/sources')).toBe(true);
     expect(requiresAdmin('DELETE', '/api/sources/abc')).toBe(true);
+    expect(requiresAdmin('PUT', '/api/sources/abc')).toBe(true);
     expect(requiresAdmin('PUT', '/api/settings')).toBe(true);
     expect(requiresAdmin('POST', '/api/profiles')).toBe(true);
     expect(requiresAdmin('PUT', '/api/profiles/abc')).toBe(true);

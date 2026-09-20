@@ -60,6 +60,8 @@ export type CatalogQuery = {
   maxYear?: number;
   /** Année minimale acceptée : restreint le classement aux titres récents. */
   minYear?: number;
+  /** Note minimale acceptée : sert au classement « mieux notés ». */
+  minRating?: number;
 };
 
 export type CatalogSyncState = {
@@ -316,6 +318,7 @@ export class CatalogStore {
     // SQL, une page entière pouvait être écartée après coup et sortir vide.
     if (input.maxYear) { base.push('(t.start_year IS NULL OR t.start_year <= ?)'); baseParams.push(input.maxYear); }
     if (input.minYear) { base.push('t.start_year >= ?'); baseParams.push(input.minYear); }
+    if (input.minRating) { base.push('t.rating >= ?'); baseParams.push(input.minRating); }
 
     const search = input.query?.trim();
     const escaped = search?.replace(/[\\%_]/g, value => '\\' + value);

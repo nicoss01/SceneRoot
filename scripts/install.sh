@@ -129,7 +129,7 @@ cd "$APP_DIR"
 step "Dépendances et compilation"
 run "npm ci" npm ci --no-audit --no-fund
 run "npm run build" npm run build
-chmod +x scripts/update.sh scripts/kiosk.sh scripts/kiosk-fallback.sh scripts/cec-input.py scripts/doctor.sh scripts/transmission-setup.sh
+chmod +x scripts/update.sh scripts/kiosk.sh scripts/kiosk-fallback.sh scripts/cec-input.py scripts/doctor.sh scripts/transmission-setup.sh scripts/park-cursor.py
 
 # ── Étape 6 : configuration persistante ──────────────────────────────────────
 step "Écriture de la configuration ($ENV_FILE)"

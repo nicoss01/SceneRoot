@@ -103,13 +103,15 @@ function HomePage({profile}:{profile:Profile}) {
     {resumeItems.length>0&&<Section title="Reprendre la lecture" items={resumeItems.slice(0,6)} onOpen={open} onDismiss={media=>void resume.dismiss(media.id)} wide />}
     <RemoteSection title="Films tendance" onOpen={open} kind="film" sort="trending" />
     <RemoteSection title="Séries tendance" onOpen={open} kind="serie" sort="trending" />
+    <RemoteSection title="Films populaires" onOpen={open} kind="film" sort="popular" />
+    <RemoteSection title="Les mieux notés" onOpen={open} kind="film" sort="top" />
     <section><div className="section-title"><h2>Explorer par genre</h2><span>{allGenres.length} genres films et séries</span></div><div className="genres">{allGenres.map((label,i) => {const Icon=i%4===0?Film:i%4===1?Tv:i%4===2?Sparkles:Heart;return <button className={`genre focusable ${i===0?'is-active':''}`} key={label} onClick={()=>navigate(`/search?genre=${encodeURIComponent(label)}`)}><Icon />{label}</button>})}</div></section>
   </>;
 }
 
 /** Classement proposé sur les pages Films et Séries. */
-type CatalogSort='popular'|'trending'|'recent';
-const browseSorts:Array<[CatalogSort,string]>=[['popular','Populaires'],['trending','Tendance'],['recent','Récents']];
+type CatalogSort='popular'|'trending'|'top'|'recent';
+const browseSorts:Array<[CatalogSort,string]>=[['popular','Populaires'],['trending','Tendance'],['top','Mieux notés'],['recent','Récents']];
 function BrowsePage({ kind, title }: { kind?: 'film'|'serie'; title: string }) {
   const navigate=useNavigate();const sentinel=useRef<HTMLDivElement>(null);
   const [sort,setSort]=useState<CatalogSort>('popular');
@@ -523,7 +525,7 @@ function SettingsPage() {
   useEffect(()=>{fetch('/api/storage').then(response=>response.ok?response.json():[]).then((rows:StorageRoot[])=>setStorage(rows)).catch(()=>{});fetch('/api/cec/status').then(response=>response.ok?response.json():null).then((data:{available:boolean;bridgeActive:boolean;adapter:string|null}|null)=>setCecStatus(data)).catch(()=>{});void loadCache()},[]);
   const purgeCache=async()=>{setPurging(true);try{await fetch('/api/cache',{method:'DELETE'});await loadCache()}finally{setPurging(false)}};
   const [settings,setSettings]=useState<AppSettings|null>(null);
-  const [catalogStatus,setCatalogStatus]=useState<CatalogStatus|null>(null);const [tmdbKey,setTmdbKey]=useState('');const [omdbKey,setOmdbKey]=useState('');const [catalogMessage,setCatalogMessage]=useState('');const [savingCatalog,setSavingCatalog]=useState(false);
+  const [catalogStatus,setCatalogStatus]=useState<CatalogStatus|null>(null);const [editingSource,setEditingSource]=useState<string|null>(null);const [tmdbKey,setTmdbKey]=useState('');const [omdbKey,setOmdbKey]=useState('');const [catalogMessage,setCatalogMessage]=useState('');const [savingCatalog,setSavingCatalog]=useState(false);
   const [newSource,setNewSource]=useState({name:'',url:'',apiKey:'',categories:''});const [sourceError,setSourceError]=useState('');const [addingSource,setAddingSource]=useState(false);
   const loadSettings=()=>fetch('/api/settings').then(response=>response.ok?response.json():null).then((data:AppSettings|null)=>setSettings(data)).catch(()=>{});
   const loadCatalogStatus=()=>fetch('/api/catalog/status').then(response=>response.ok?response.json():null).then((data:CatalogStatus|null)=>setCatalogStatus(data)).catch(()=>{});
@@ -548,7 +550,18 @@ function SettingsPage() {
   const saveQuality=(preferredQuality:string)=>{setSettings(current=>current?{...current,preferredQuality}:current);void fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({preferredQuality})})};
   const saveReserve=(minFreeGb:number)=>{setSettings(current=>current?{...current,minFreeGb}:current);void fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({minFreeGb})})};
   const addSource=async()=>{setSourceError('');setAddingSource(true);try{const response=await fetch('/api/sources',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(newSource)});if(!response.ok){const payload=await response.json().catch(()=>({}));throw new Error((payload as {error?:string}).error??'Ajout impossible')}setNewSource({name:'',url:'',apiKey:'',categories:''});await loadSettings()}catch(cause){setSourceError((cause as Error).message)}finally{setAddingSource(false)}};
-  const removeSource=async(id:string)=>{await fetch(`/api/sources/${id}`,{method:'DELETE'});await loadSettings()};
+  const removeSource=async(id:string)=>{await fetch(`/api/sources/${id}`,{method:'DELETE'});if(editingSource===id)cancelSourceEdit();await loadSettings()};
+  const editSource=(source:MaskedSource)=>{setEditingSource(source.id);setSourceError('');setNewSource({name:source.name,url:source.url,apiKey:'',categories:source.categories??''})};
+  const cancelSourceEdit=()=>{setEditingSource(null);setSourceError('');setNewSource({name:'',url:'',apiKey:'',categories:''})};
+  const saveSource=async()=>{
+    if(!editingSource)return void addSource();
+    setSourceError('');setAddingSource(true);
+    try{
+      const response=await fetch(`/api/sources/${editingSource}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(newSource)});
+      if(!response.ok){const payload=await response.json().catch(()=>({}));throw new Error((payload as {error?:string}).error??'Modification impossible')}
+      cancelSourceEdit();await loadSettings();
+    }catch(cause){setSourceError((cause as Error).message)}finally{setAddingSource(false)}
+  };
   const [health,setHealth]=useState<{addresses?:string[];port?:number}|null>(null);
   const [tokenInfo,setTokenInfo]=useState<{token:string|null;source:string;requireToken:boolean}|null>(null);const [generating,setGenerating]=useState(false);
   useEffect(()=>{fetch('/api/health').then(response=>response.ok?response.json():null).then(setHealth).catch(()=>{})},[]);
@@ -575,11 +588,11 @@ function SettingsPage() {
       <small>{tokenInfo?.requireToken?'Mode strict : un jeton est requis même sur le réseau local.':'Sur votre réseau local, les réglages fonctionnent sans jeton. Le jeton n’est utile que pour un accès hors du domicile ou en mode strict (SCENEROOT_REQUIRE_TOKEN=1).'} Le QR pré-remplit le jeton sur le mobile.</small></div>
     <div className="settings-card sources"><h2><Wifi/>Sources de recherche</h2>
       {settings?.envSources.map(source=><div className="source-row" key={source.id}><span><b>{source.name}</b><small>Configurée par l’environnement</small></span><i className="dot"/></div>)}
-      {settings?.sources.map(source=><div className="source-row" key={source.id}><span><b>{source.name}</b><small>{source.url}{source.hasKey?' · clé API':''}</small></span><button className="icon-btn" title="Supprimer" onClick={()=>void removeSource(source.id)}><Trash2/></button></div>)}
+      {settings?.sources.map(source=><div className={`source-row ${editingSource===source.id?'is-editing':''}`} key={source.id}><span><b>{source.name}</b><small>{source.url}{source.hasKey?' · clé API':''}{source.categories?` · ${source.categories}`:''}</small></span><button className="icon-btn" title="Modifier" onClick={()=>editSource(source)}><Pencil/></button><button className="icon-btn" title="Supprimer" onClick={()=>void removeSource(source.id)}><Trash2/></button></div>)}
       {!settings?.envSources.length&&!settings?.sources.length&&<p>Aucune source configurée.</p>}
-      <div className="source-form"><input placeholder="Nom" value={newSource.name} onChange={event=>setNewSource(current=>({...current,name:event.target.value}))}/><input placeholder="URL Torznab (https://…)" value={newSource.url} onChange={event=>setNewSource(current=>({...current,url:event.target.value}))}/><input placeholder="Clé API (facultatif)" value={newSource.apiKey} onChange={event=>setNewSource(current=>({...current,apiKey:event.target.value}))}/><input placeholder="Catégories (ex. 2000,5000)" value={newSource.categories} onChange={event=>setNewSource(current=>({...current,categories:event.target.value}))}/></div>
+      <div className="source-form"><input placeholder="Nom" value={newSource.name} onChange={event=>setNewSource(current=>({...current,name:event.target.value}))}/><input placeholder="URL Torznab (https://…)" value={newSource.url} onChange={event=>setNewSource(current=>({...current,url:event.target.value}))}/><input placeholder={editingSource?'Clé API (vide = inchangée)':'Clé API (facultatif)'} value={newSource.apiKey} onChange={event=>setNewSource(current=>({...current,apiKey:event.target.value}))}/><input placeholder="Catégories (ex. 2000,5000)" value={newSource.categories} onChange={event=>setNewSource(current=>({...current,categories:event.target.value}))}/></div>
       {sourceError&&<div className="profile-error">{sourceError}</div>}
-      <button className="secondary" onClick={()=>void addSource()} disabled={addingSource||!newSource.name.trim()||!newSource.url.trim()}><Plus/>{addingSource?'Ajout…':'Ajouter une source Torznab'}</button>
+      <div className="source-actions"><button className="secondary" onClick={()=>void saveSource()} disabled={addingSource||!newSource.name.trim()||!newSource.url.trim()}>{editingSource?<><Check/>{addingSource?'Enregistrement…':'Enregistrer les modifications'}</>:<><Plus/>{addingSource?'Ajout…':'Ajouter une source Torznab'}</>}</button>{editingSource&&<button className="secondary" onClick={cancelSourceEdit} disabled={addingSource}><X/>Annuler</button>}</div>
       <small>Utilisez uniquement des sources et contenus que vous êtes autorisé à récupérer.</small></div>
   </div></>;
 }

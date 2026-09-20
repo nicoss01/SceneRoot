@@ -685,3 +685,6 @@ body.hide-cursor, body.hide-cursor * { cursor: none !important; }
 ::-webkit-scrollbar-corner { background: transparent; }
 
 .episode-tag { color: var(--cyan); font-weight: 700; letter-spacing: .02em; }
+
+.source-row.is-editing { border-color: var(--cyan); box-shadow: 0 0 0 1px rgba(34,211,238,.35); }
+.source-actions { display: flex; flex-wrap: wrap; gap: 10px; }
