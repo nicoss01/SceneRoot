@@ -141,6 +141,8 @@ sudo chown -R "$USER":"$USER" /var/lib/sceneroot
   echo "SCENEROOT_KIOSK_MODE=$CFG_KIOSK_MODE"
   echo "SCENEROOT_TV_SCALE=$CFG_TV_SCALE"
   echo "TRANSMISSION_RPC_URL=$CFG_TRANSMISSION"
+  echo "SCENEROOT_MPV_HWDEC=no"
+  echo "SCENEROOT_MPV_ARGS=--vo=gpu-next --gpu-context=wayland"
   [[ -n "$CFG_TMDB" ]]  && echo "TMDB_API_KEY=$CFG_TMDB"
   [[ -n "$CFG_TOKEN" ]] && echo "SCENEROOT_ADMIN_TOKEN=$CFG_TOKEN"
   true  # garantit un code de sortie 0 du bloc (sinon set -e+pipefail tue le script)
