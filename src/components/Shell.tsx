@@ -39,7 +39,7 @@ export function Shell({ profile, onSwitchProfile, children }: { profile: Profile
       <header className="topbar">
         <button className="profile-mini" onClick={onSwitchProfile} title="Changer de profil"><ProfileAvatar profile={profile} className="profile-avatar--mini"/><div><small>Bon retour,</small><strong>{profile.name}</strong></div></button>
         <div className="tagline">DES HISTOIRES<br/>POUR TOUS VOS SOIRS<i /></div>
-        <div className="status"><Settings size={22} /><span>{clock.toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit' })}</span><Wifi size={21} /></div>
+        <div className="status"><span>{clock.toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit' })}</span><Wifi size={21} /></div>
       </header>
       <div className="page" key={location.pathname}>{children}</div>
     </main>
