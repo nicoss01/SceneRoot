@@ -341,9 +341,8 @@ async function enrichCatalogSeason(parent:CatalogRow,seasonNumber:number){
   try{const lookup=await fetch(`https://api.tvmaze.com/lookup/shows?imdb=${encodeURIComponent(parent.imdbId)}`,{headers:{Accept:'application/json','User-Agent':'SceneRoot/0.1'},signal:AbortSignal.timeout(12_000)});if(!lookup.ok)return;const show=await lookup.json() as {id:number};catalogStore.upsertLocalized({imdbId:parent.imdbId,tvmazeId:show.id,source:'tvmaze'});const result=await cachedJson<Array<{season:number;number:number;name?:string;summary?:string;image?:{medium?:string;original?:string}}>>(`catalog-episodes-tvmaze-${show.id}`,`https://api.tvmaze.com/shows/${show.id}/episodes`,30*24*60*60*1000);for(const remote of result.data.filter(value=>value.season===seasonNumber)){const local=localSeason.episodes.find(value=>value.episode===remote.number);if(local)catalogStore.upsertLocalized({imdbId:local.imdbId,titleFr:remote.name,overviewFr:stripHtml(remote.summary),poster:remote.image?.original??remote.image?.medium,source:'tvmaze'})}}catch(error){app.log.debug({error,parent:parent.imdbId,seasonNumber},'TVmaze season enrichment failed')}
 }
 type RemoteEpisode={id:string;season:number;episode:number;title:string;overview?:string;still?:string;versions:number;progress:number;position:number;playable:boolean};
-type RemoteSeasons={source:string;seasons:Array<{season:number;episodes:RemoteEpisode[]}>};
-/** Au plus huit saisons chargées en parallèle : au-delà, TMDB et le Pi saturent. */
-const SEASON_BATCH=8;
+type SeasonSummary={season:number;episodeCount:number};
+type RemoteSeasons={source:string;available:SeasonSummary[];seasons:Array<{season:number;episodes:RemoteEpisode[]}>};
 /** Retrouve l'identifiant TMDB d'une série à partir de ce que l'on connaît. */
 async function tmdbSeriesId(key:string,options:{tmdbId?:number;imdbId?:string;title?:string;year?:number}):Promise<number|undefined>{
   if(options.tmdbId)return options.tmdbId;
@@ -359,42 +358,35 @@ async function tmdbSeriesId(key:string,options:{tmdbId?:number;imdbId?:string;ti
   return undefined;
 }
 /**
- * Saisons et épisodes d'une série qui n'est pas dans la médiathèque : TMDB en
- * français quand une clé est configurée, TVmaze en secours. Les réponses sont
- * mises en cache, seule la première consultation paie les appels réseau.
+ * Saisons d'une série absente de la mediatheque. La liste des saisons coûte une
+ * seule requête ; les épisodes ne sont chargés que pour la saison demandée,
+ * sans quoi une série de vingt saisons en réclamerait autant. TMDB en français
+ * quand une clé est configurée, TVmaze en secours.
  */
-async function remoteSeasons(options:{tmdbId?:number;imdbId?:string;title?:string;year?:number}):Promise<RemoteSeasons>{
+async function remoteSeasons(options:{tmdbId?:number;imdbId?:string;title?:string;year?:number;season?:number}):Promise<RemoteSeasons>{
   const key=tmdbApiKey();
   if(key){
     const tmdbId=await tmdbSeriesId(key,options);
     if(tmdbId){
       try{
         const detail=await cachedJson<{seasons?:Array<{season_number:number;episode_count?:number}>}>(`tmdb-tv-${tmdbId}`,`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${encodeURIComponent(key)}&language=fr-FR`,7*24*60*60*1000);
-        const numbers=(detail.data.seasons??[]).map(season=>season.season_number).filter(number=>number>0).slice(0,SEASON_BATCH*3);
-        const seasons:RemoteSeasons['seasons']=[];
-        for(let index=0;index<numbers.length;index+=SEASON_BATCH){
-          const slice=numbers.slice(index,index+SEASON_BATCH);
-          const loaded=await Promise.all(slice.map(async number=>{
-            try{
-              const season=await cachedJson<{episodes?:Array<{episode_number:number;name?:string;overview?:string;still_path?:string}>}>(`catalog-episodes-tmdb-${tmdbId}-${number}`,`https://api.themoviedb.org/3/tv/${tmdbId}/season/${number}?api_key=${encodeURIComponent(key)}&language=fr-FR`,30*24*60*60*1000);
-              const episodes=(season.data.episodes??[]).map(episode=>({
-                id:`tmdb-episode-${tmdbId}-${number}-${episode.episode_number}`,
-                season:number,episode:episode.episode_number,
-                title:episode.name||`Épisode ${episode.episode_number}`,
-                overview:episode.overview||undefined,
-                still:episode.still_path?`https://image.tmdb.org/t/p/w500${episode.still_path}`:undefined,
-                versions:0,progress:0,position:0,playable:false,
-              }));
-              return episodes.length?{season:number,episodes}:null;
-            }catch{return null}
+        const available=(detail.data.seasons??[]).filter(season=>season.season_number>0).map(season=>({season:season.season_number,episodeCount:Number(season.episode_count??0)}));
+        if(available.length){
+          const wanted=available.some(season=>season.season===options.season)?options.season!:available[0].season;
+          const page=await cachedJson<{episodes?:Array<{episode_number:number;name?:string;overview?:string;still_path?:string}>}>(`catalog-episodes-tmdb-${tmdbId}-${wanted}`,`https://api.themoviedb.org/3/tv/${tmdbId}/season/${wanted}?api_key=${encodeURIComponent(key)}&language=fr-FR`,30*24*60*60*1000);
+          const episodes=(page.data.episodes??[]).map(episode=>({
+            id:`tmdb-episode-${tmdbId}-${wanted}-${episode.episode_number}`,
+            season:wanted,episode:episode.episode_number,
+            title:episode.name||`Épisode ${episode.episode_number}`,
+            overview:episode.overview||undefined,
+            still:episode.still_path?`https://image.tmdb.org/t/p/w500${episode.still_path}`:undefined,
+            versions:0,progress:0,position:0,playable:false,
           }));
-          for(const season of loaded)if(season)seasons.push(season);
+          return{source:'TMDB (fr-FR)',available,seasons:[{season:wanted,episodes}]};
         }
-        if(seasons.length)return{source:'TMDB (fr-FR)',seasons};
       }catch{/* on bascule sur TVmaze */}
     }
   }
-  // TVmaze : une seule requête donne tous les épisodes, résumés en anglais.
   try{
     let showId:number|undefined;
     if(options.imdbId){
@@ -405,7 +397,7 @@ async function remoteSeasons(options:{tmdbId?:number;imdbId?:string;title?:strin
       const search=await fetch(`https://api.tvmaze.com/singlesearch/shows?q=${encodeURIComponent(options.title)}`,{headers:{Accept:'application/json','User-Agent':'SceneRoot/0.1'},signal:AbortSignal.timeout(12_000)});
       if(search.ok)showId=(await search.json() as {id?:number}).id;
     }
-    if(!showId)return{source:'Aucune source d’épisodes',seasons:[]};
+    if(!showId)return{source:'Aucune source d\u2019episodes',available:[],seasons:[]};
     const result=await cachedJson<Array<{season:number;number:number;name?:string;summary?:string;image?:{medium?:string;original?:string}}>>(`tvmaze-episodes-${showId}`,`https://api.tvmaze.com/shows/${showId}/episodes`,7*24*60*60*1000);
     const grouped=new Map<number,RemoteEpisode[]>();
     for(const episode of result.data){
@@ -421,38 +413,44 @@ async function remoteSeasons(options:{tmdbId?:number;imdbId?:string;title?:strin
       });
       grouped.set(episode.season,list);
     }
-    const seasons=[...grouped.entries()].sort((a,b)=>a[0]-b[0]).map(([season,episodes])=>({season,episodes}));
-    return{source:seasons.length?'TVmaze':'Aucune source d’épisodes',seasons};
-  }catch{return{source:'Aucune source d’épisodes',seasons:[]}}
+    const available=[...grouped.entries()].sort((a,b)=>a[0]-b[0]).map(([season,episodes])=>({season,episodeCount:episodes.length}));
+    if(!available.length)return{source:'Aucune source d\u2019episodes',available:[],seasons:[]};
+    const wanted=available.some(season=>season.season===options.season)?options.season!:available[0].season;
+    return{source:'TVmaze',available,seasons:[{season:wanted,episodes:grouped.get(wanted)??[]}]};
+  }catch{return{source:'Aucune source d\u2019episodes',available:[],seasons:[]}}
 }
 /**
- * Saisons et épisodes d'une série du catalogue. Le catalogue IMDb local ne
- * contient les épisodes qu'après un import complet, et une série TMDB n'y
- * figure pas du tout : on complète alors depuis TMDB ou TVmaze, le titre et
- * l'année étant fournis par la fiche.
+ * Saisons et épisodes d'une série du catalogue. La réponse annonce toujours
+ * toutes les saisons disponibles, mais ne détaille que celle demandée : c'est
+ * ce qui permet à la fiche de n'en charger qu'une à la fois.
  */
-app.get<{Params:{id:string};Querystring:{title?:string;year?:string}}>('/api/catalog/:id/seasons',async(request,reply)=>{
+app.get<{Params:{id:string};Querystring:{title?:string;year?:string;season?:string}}>('/api/catalog/:id/seasons',async(request,reply)=>{
   const title=request.query.title?.trim()||undefined;
   const year=Number(request.query.year)||undefined;
+  const season=Number(request.query.season)||undefined;
   const imdbMatch=/^imdb-serie-(tt\d+)$/.exec(request.params.id);
   if(imdbMatch){
     const parent=catalogStore.get(imdbMatch[1]);
     if(parent&&parent.kind==='serie'){
       let seasons=catalogStore.seasons(parent.imdbId);
       if(seasons.length){
-        await Promise.allSettled(seasons.slice(0,3).filter(season=>season.episodes.some(episode=>!episode.titleFr)).map(season=>enrichCatalogSeason(parent,season.season)));
+        const available=seasons.map(entry=>({season:entry.season,episodeCount:entry.episodes.length}));
+        const wanted=available.some(entry=>entry.season===season)?season!:available[0].season;
+        // Les titres français ne sont récupérés que pour la saison affichée.
+        if(seasons.find(entry=>entry.season===wanted)?.episodes.some(episode=>!episode.titleFr))await enrichCatalogSeason(parent,wanted).catch(()=>{/* titres d'origine conservés */});
         seasons=catalogStore.seasons(parent.imdbId);
-        return{source:tmdbApiKey()?'IMDb + TMDB (fr-FR)':'IMDb + TVmaze',seasons:seasons.map(season=>({season:season.season,episodes:season.episodes.map(episode=>({id:`imdb-episode-${episode.imdbId}`,season:season.season,episode:episode.episode,title:episode.titleFr||episode.title,overview:episode.overviewFr,still:episode.still,versions:0,progress:0,position:0,playable:false}))}))};
+        const chosen=seasons.find(entry=>entry.season===wanted);
+        return{source:tmdbApiKey()?'IMDb + TMDB (fr-FR)':'IMDb + TVmaze',available,seasons:chosen?[{season:wanted,episodes:chosen.episodes.map(episode=>({id:`imdb-episode-${episode.imdbId}`,season:wanted,episode:episode.episode,title:episode.titleFr||episode.title,overview:episode.overviewFr,still:episode.still,versions:0,progress:0,position:0,playable:false}))}]:[]};
       }
       // Import interrompu avant les épisodes : on va les chercher en ligne.
-      return remoteSeasons({imdbId:parent.imdbId,tmdbId:parent.tmdbId,title:title??parent.titleFr??parent.primaryTitle,year:year??parent.startYear});
+      return remoteSeasons({imdbId:parent.imdbId,tmdbId:parent.tmdbId,title:title??parent.titleFr??parent.primaryTitle,year:year??parent.startYear,season});
     }
-    return remoteSeasons({imdbId:imdbMatch[1],title,year});
+    return remoteSeasons({imdbId:imdbMatch[1],title,year,season});
   }
   const tmdbMatch=/^tmdb-serie-(\d+)$/.exec(request.params.id);
-  if(tmdbMatch)return remoteSeasons({tmdbId:Number(tmdbMatch[1]),title,year});
+  if(tmdbMatch)return remoteSeasons({tmdbId:Number(tmdbMatch[1]),title,year,season});
   if(!title)return reply.code(404).send({error:'Série introuvable : titre manquant'});
-  return remoteSeasons({title,year});
+  return remoteSeasons({title,year,season});
 });
 
 /**

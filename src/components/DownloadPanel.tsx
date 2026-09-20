@@ -11,7 +11,7 @@ type RankedResult = SourceResult & { id: string; quality: string; languages: str
 
 const MAX_RESULTS = 6;
 
-export function DownloadPanel({ item, onClose, priority = false, onQueued }: { item: MediaItem; onClose: () => void; priority?: boolean; onQueued?: (torrentId?: number) => void }) {
+export function DownloadPanel({ item, onClose, priority = false, onQueued, initialSeason, initialEpisode }: { item: MediaItem; onClose: () => void; priority?: boolean; onQueued?: (torrentId?: number) => void; initialSeason?: number; initialEpisode?: number }) {
   const [results, setResults] = useState<RankedResult[]>([]);
   const [totalFound, setTotalFound] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -19,8 +19,8 @@ export function DownloadPanel({ item, onClose, priority = false, onQueued }: { i
   const [launching, setLaunching] = useState<string | null>(null);
   const [launched, setLaunched] = useState<string | null>(null);
   const [launchError, setLaunchError] = useState('');
-  const [season, setSeason] = useState(1);
-  const [episode, setEpisode] = useState(1);
+  const [season, setSeason] = useState(initialSeason ?? 1);
+  const [episode, setEpisode] = useState(initialEpisode ?? 1);
   const [wholeSeason, setWholeSeason] = useState(false);
   const [diagnostics, setDiagnostics] = useState<Array<{ source: string; status: number; count: number; error?: string; mode?: string }>>([]);
   // Préférences de l'utilisateur : la langue audio oriente la recherche, la

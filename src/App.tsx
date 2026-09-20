@@ -237,7 +237,11 @@ function DetailPage({profile}:{profile:Profile}) {
   const isSeries=item.kind==='serie';
   const [downloadMode,setDownloadMode]=useState<'later'|'play'|null>(null);const [chosenVersion,setChosenVersion]=useState<string|undefined>();
   const prefs=usePreferences(profile.id);const isFavorite=prefs.favorites.has(item.id);const isHidden=prefs.hidden.has(item.id);
-  const seenFromHistory=useWatched().has(item.id);
+  const watchedIds=useWatched();
+  const seenFromHistory=watchedIds.has(item.id);
+  // Téléchargement d'un épisode précis : la même fenêtre que pour un film, avec
+  // la saison et l'épisode déjà renseignés.
+  const [episodeTarget,setEpisodeTarget]=useState<{season:number;episode:number}|null>(null);
   const opinion=useOpinion(profile.id,item.id,seenFromHistory);
   const [refreshing,setRefreshing]=useState(false);const [refreshMessage,setRefreshMessage]=useState('');
   // Recharge les métadonnées puis réaffiche la fiche avec les données fraîches.
@@ -276,9 +280,43 @@ function DetailPage({profile}:{profile:Profile}) {
       {refreshMessage&&<span className="opinion-error">{refreshMessage}</span>}
     </div>
     {item.kind==='film'&&filmVersions.length>1&&<div className="versions"><h3>{filmVersions.length} versions disponibles</h3><div className="version-list">{filmVersions.map(version=><button className={`version focusable ${activeVersion===version.id?'is-selected':''}`} key={version.id} onClick={()=>setChosenVersion(version.id)}>{versionLabel(version)}{activeVersion===version.id&&<Check/>}</button>)}</div></div>}
+    {episodeTarget&&<DownloadPanel item={item} initialSeason={episodeTarget.season} initialEpisode={episodeTarget.episode} onClose={()=>setEpisodeTarget(null)}/>}
     {downloadMode&&<DownloadPanel item={item} priority={downloadMode==='play'} onQueued={downloadMode==='play'?torrentId=>{setDownloadMode(null);navigate(torrentId!=null?`/stream/${torrentId}`:'/downloads')}:undefined} onClose={()=>setDownloadMode(null)}/>}
-    {isSeries&&(series.loading||series.seasons.length>0)&&<div className="episodes"><div className="episodes-head"><h2>Saisons et épisodes</h2>{series.source&&<span>Infos épisodes : {series.source}</span>}</div>{series.loading&&!series.seasons.length&&<div className="library-loading"><i/>Chargement des épisodes…</div>}{series.seasons.map(season=><div className="season" key={season.season}><h3>Saison {season.season} · {season.episodes.length} épisode{season.episodes.length>1?'s':''}</h3><div className="episode-cards">{season.episodes.map(episode=>{const playable=isLocal&&episode.playable!==false;return <button className={`episode-card focusable ${episode.id===nextId&&playable?'is-next':''}`} key={episode.id} disabled={!playable} onClick={()=>playable&&navigate(`/player/${episode.id}`)}><div className="episode-still" style={{'--a':item.palette[0],'--b':item.palette[1]} as React.CSSProperties}>{episode.still?<img src={posterUrl(episode.still)} alt="" loading="lazy" decoding="async" onError={event=>{event.currentTarget.style.display='none'}}/>:<span>{item.symbol}</span>}{playable&&<span className="episode-play"><Play size={18} fill="currentColor"/></span>}{episode.progress>0.02&&<i className="episode-progress" style={{width:`${Math.min(100,Math.round(episode.progress*100))}%`}}/>}</div><div className="episode-body"><strong>E{String(episode.episode).padStart(2,'0')} · {episode.title}{episode.id===nextId&&playable&&<em> · à suivre</em>}{episode.versions>1&&<em> · {episode.versions} versions</em>}</strong>{episode.overview&&<p>{episode.overview}</p>}</div></button>})}</div></div>)}</div>}</div>
-  </div>;
+    {isSeries&&<div className="episodes">
+      <div className="episodes-head">
+        <h2>Saisons et épisodes</h2>
+        {series.available.length>0&&<label className="season-picker">Saison
+          <select className="focusable" value={series.season??''} onChange={event=>series.selectSeason(Number(event.target.value))}>
+            {series.available.map(entry=><option key={entry.season} value={entry.season}>Saison {entry.season}{entry.episodeCount?` · ${entry.episodeCount} épisodes`:''}</option>)}
+          </select>
+        </label>}
+        {series.source&&<span>Infos épisodes : {series.source}</span>}
+      </div>
+      {series.loading&&!series.episodes.length&&<div className="library-loading"><i/>Chargement des épisodes…</div>}
+      {!series.loading&&!series.episodes.length&&<div className="library-empty"><Tv/><h3>Épisodes indisponibles</h3><p>Aucune source ne fournit les épisodes de cette série pour le moment.</p></div>}
+      <div className="episode-list">{series.episodes.map(episode=>{
+        const playable=isLocal&&episode.playable!==false;
+        const seen=watchedIds.has(episode.id)||episode.progress>=0.92;
+        const started=!seen&&episode.progress>0.02;
+        return <div className={`episode-row ${episode.id===nextId&&playable?'is-next':''}`} key={episode.id}>
+          <div className="episode-still" style={{'--a':item.palette[0],'--b':item.palette[1]} as React.CSSProperties}>
+            {episode.still?<img src={posterUrl(episode.still)} alt="" loading="lazy" decoding="async" onError={event=>{event.currentTarget.style.display='none'}}/>:<span>{item.symbol}</span>}
+            {seen&&<span className="episode-state is-seen" title="Déjà vu"><Check size={16}/></span>}
+            {started&&<span className="episode-state is-started" title={`Commencé · ${Math.round(episode.progress*100)} %`}><Eye size={16}/></span>}
+            {started&&<i className="episode-progress" style={{width:`${Math.min(100,Math.round(episode.progress*100))}%`}}/>}
+          </div>
+          <div className="episode-body">
+            <strong>E{String(episode.episode).padStart(2,'0')} · {episode.title}{episode.id===nextId&&playable&&<em> · à suivre</em>}</strong>
+            {episode.overview&&<p>{episode.overview}</p>}
+          </div>
+          <div className="episode-actions">
+            {playable&&<button className="primary focusable" onClick={()=>navigate(`/player/${episode.id}`)}><Play size={18} fill="currentColor"/> {started?'Reprendre':'Lire'}</button>}
+            <button className="secondary focusable" onClick={()=>setEpisodeTarget({season:episode.season,episode:episode.episode})}><Download size={18}/> Télécharger</button>
+          </div>
+        </div>;
+      })}</div>
+    </div>}
+  </div></div>;
 }
 
 // On ne propose de noter qu'à la fin d'un film : quitter au bout de vingt
