@@ -2,13 +2,14 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import staticPlugin from '@fastify/static';
 import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statfsSync, statSync, writeFileSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import { readdir } from 'node:fs/promises';
 import { extname, isAbsolute, join, parse, relative, resolve } from 'node:path';
 import { execFile, spawn } from 'node:child_process';
 import { createConnection } from 'node:net';
 import { networkInterfaces } from 'node:os';
 import { promisify } from 'node:util';
-import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto';
 import { recommendGroup } from './lib/recommend.js';
 import { rankDownloads, type RankCandidate, type RankPrefs } from './lib/rank.js';
 import { isAllowedOrigin, parseAllowedOrigins } from './lib/cors.js';
@@ -294,6 +295,43 @@ async function enrichCatalogSeason(parent:CatalogRow,seasonNumber:number){
 }
 app.get<{Params:{id:string}}>('/api/catalog/:id/seasons',async(request,reply)=>{const match=/^imdb-serie-(tt\d+)$/.exec(request.params.id);if(!match)return reply.code(404).send({error:'Série du catalogue local introuvable'});const parent=catalogStore.get(match[1]);if(!parent||parent.kind!=='serie')return reply.code(404).send({error:'Série introuvable'});let seasons=catalogStore.seasons(parent.imdbId);await Promise.allSettled(seasons.slice(0,3).filter(season=>season.episodes.some(episode=>!episode.titleFr)).map(season=>enrichCatalogSeason(parent,season.season)));seasons=catalogStore.seasons(parent.imdbId);return{source:tmdbApiKey()?'IMDb + TMDB (fr-FR)':'IMDb + TVmaze',seasons:seasons.map(season=>({season:season.season,episodes:season.episodes.map(episode=>({id:`imdb-episode-${episode.imdbId}`,season:season.season,episode:episode.episode,title:episode.titleFr||episode.title,overview:episode.overviewFr,still:episode.still,versions:0,progress:0,position:0,playable:false}))}))}});
 
+/**
+ * Cache local des affiches. Les jaquettes viennent de quelques hébergeurs
+ * publics : les stocker sur le Raspberry Pi évite de les retélécharger à chaque
+ * affichage, et la médiathèque reste illustrée même sans réseau.
+ *
+ * L'hôte est vérifié : ce point d'accès ne doit pas devenir un relais ouvert.
+ */
+const imageHosts=new Set(['image.tmdb.org','www.themoviedb.org','upload.wikimedia.org','static.tvmaze.com','artworks.thetvdb.com','m.media-amazon.com','commons.wikimedia.org']);
+const imageTypes=new Map([['image/jpeg','jpg'],['image/png','png'],['image/webp','webp'],['image/avif','avif'],['image/gif','gif'],['image/svg+xml','svg']]);
+const typeByExtension=new Map([...imageTypes].map(([type,extension])=>[extension,type]));
+function cachedImagePath(url:string,extension:string){return join(cacheDir,`img-${createHash('sha1').update(url).digest('hex')}.${extension}`)}
+function findCachedImage(url:string){for(const extension of typeByExtension.keys()){const path=cachedImagePath(url,extension);if(existsSync(path))return{path,extension}}return null}
+app.get<{Querystring:{url?:string}}>('/api/image',async(request,reply)=>{
+  const raw=request.query.url;
+  if(!raw)return reply.code(400).send({error:'Adresse manquante'});
+  let target:URL;
+  try{target=new URL(raw)}catch{return reply.code(400).send({error:'Adresse invalide'})}
+  if(target.protocol!=='https:'&&target.protocol!=='http:')return reply.code(400).send({error:'Protocole non autorisé'});
+  if(!imageHosts.has(target.hostname))return reply.code(403).send({error:`Hébergeur d'images non autorisé : ${target.hostname}`});
+  const hit=findCachedImage(target.toString());
+  if(hit){
+    reply.header('Cache-Control','public, max-age=31536000, immutable').header('X-SceneRoot-Cache','hit');
+    return reply.type(typeByExtension.get(hit.extension)??'application/octet-stream').send(createReadStream(hit.path));
+  }
+  try{
+    const response=await fetch(target,{signal:AbortSignal.timeout(15000),headers:{'User-Agent':'SceneRoot/0.1 (+https://github.com/sceneroot)',Accept:'image/*'}});
+    if(!response.ok)return reply.code(502).send({error:`Image indisponible (HTTP ${response.status})`});
+    const contentType=(response.headers.get('content-type')??'').split(';')[0].trim().toLowerCase();
+    const extension=imageTypes.get(contentType);
+    if(!extension)return reply.code(415).send({error:`Type d'image non géré : ${contentType||'inconnu'}`});
+    const buffer=Buffer.from(await response.arrayBuffer());
+    // L'écriture ne doit pas retarder l'affichage : on répond, on stocke ensuite.
+    void writeFile(cachedImagePath(target.toString(),extension),buffer).catch(error=>app.log.warn({error},'Image cache write failed'));
+    reply.header('Cache-Control','public, max-age=31536000, immutable').header('X-SceneRoot-Cache','miss');
+    return reply.type(contentType).send(buffer);
+  }catch(error){return reply.code(502).send({error:`Téléchargement de l'image impossible : ${(error as Error).message}`})}
+});
 function cacheStats(){try{const files=readdirSync(cacheDir);let bytes=0;for(const file of files){try{bytes+=statSync(join(cacheDir,file)).size}catch{/* fichier disparu entre-temps */}}return{entries:files.length,bytes}}catch{return{entries:0,bytes:0}}}
 app.get('/api/cache',async()=>cacheStats());
 app.delete('/api/cache',async()=>{let removed=0;try{for(const file of readdirSync(cacheDir)){try{rmSync(join(cacheDir,file));removed++}catch{/* ignore */}}}catch{/* dossier absent */}return{ok:true,removed}});
