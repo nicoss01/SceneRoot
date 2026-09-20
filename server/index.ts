@@ -597,8 +597,8 @@ async function enrichWikidataIds(rows:CatalogRow[]){
 }
 
 async function localCatalog(page:number,limit:number,kind?:'film'|'serie',query='',genre='',recent=false):Promise<ProviderPage>{
-  let result=catalogStore.query({kind,query,genre,page,limit,sort:recent?'recent':'popular'});const key=tmdbApiKey();const staleBefore=Date.now()-30*24*60*60*1000;const needs=result.items.filter(row=>key?row.metadataSource!=='tmdb'||!row.metadataCheckedAt||Date.parse(row.metadataCheckedAt)<staleBefore:!row.metadataCheckedAt||Date.parse(row.metadataCheckedAt)<staleBefore);
-  if(needs.length){await Promise.allSettled(needs.slice(0,Math.min(8,limit)).map(row=>key?enrichTmdbRow(row,key):enrichWikipediaFallback(row)));result=catalogStore.query({kind,query,genre,page,limit,sort:recent?'recent':'popular'})}void enrichWikidataIds(result.items);
+  let result=catalogStore.query({kind,query,genre,page,limit,sort:recent?'recent':'popular',maxYear:new Date().getFullYear()});const key=tmdbApiKey();const staleBefore=Date.now()-30*24*60*60*1000;const needs=result.items.filter(row=>key?row.metadataSource!=='tmdb'||!row.metadataCheckedAt||Date.parse(row.metadataCheckedAt)<staleBefore:!row.metadataCheckedAt||Date.parse(row.metadataCheckedAt)<staleBefore);
+  if(needs.length){await Promise.allSettled(needs.slice(0,Math.min(8,limit)).map(row=>key?enrichTmdbRow(row,key):enrichWikipediaFallback(row)));result=catalogStore.query({kind,query,genre,page,limit,sort:recent?'recent':'popular',maxYear:new Date().getFullYear()})}void enrichWikidataIds(result.items);
   return{items:result.items.map(localCatalogItem),hasMore:page*limit<result.total,source:key?'IMDb local + TMDB français':'IMDb local + Wikipédia (secours)',cachedAt:new Date().toISOString(),cacheState:'local',totalItems:result.total};
 }
 

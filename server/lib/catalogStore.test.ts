@@ -40,6 +40,19 @@ describe('CatalogStore', () => {
     ] }]);
   });
 
+  it('excludes upcoming titles so a "recent" page is never emptied after the fact', () => {
+    const store = fresh();
+    store.upsertTitles([
+      { imdbId:'tt1', kind:'film', primaryTitle:'Sorti', startYear:2024, genres:[], adult:false },
+      { imdbId:'tt2', kind:'film', primaryTitle:'Annoncé', startYear:2099, genres:[], adult:false },
+      { imdbId:'tt3', kind:'film', primaryTitle:'Année inconnue', genres:[], adult:false },
+    ], 'sync');
+    const page = store.query({ page:1, limit:2, sort:'recent', maxYear:2026 });
+    expect(page.items.map(row => row.primaryTitle)).not.toContain('Annoncé');
+    expect(page.items.length).toBeGreaterThan(0);
+    expect(page.total).toBe(2);
+  });
+
   it('removes rows absent from a completed IMDb generation', () => {
     const store = fresh();
     store.upsertTitles([{ imdbId:'tt1', kind:'film', primaryTitle:'Old', genres:[], adult:false }], 'old');

@@ -56,6 +56,8 @@ export type CatalogQuery = {
   page: number;
   limit: number;
   sort?: 'popular' | 'recent';
+  /** Année maximale acceptée : écarte les titres à paraître. */
+  maxYear?: number;
 };
 
 export type CatalogSyncState = {
@@ -167,6 +169,9 @@ export class CatalogStore {
       params.push(pattern, pattern, pattern);
     }
     if (input.genre?.trim()) { where.push('t.genres LIKE ?'); params.push(`%"${input.genre.trim()}"%`); }
+    // Le tri « récent » remonte d'abord les titres annoncés : sans ce filtre en
+    // SQL, une page entière pouvait être écartée après coup et sortir vide.
+    if (input.maxYear) { where.push('(t.start_year IS NULL OR t.start_year <= ?)'); params.push(input.maxYear); }
     const clause = where.join(' AND ');
     const total = Number((this.db.prepare(`SELECT COUNT(*) AS n FROM catalog_titles t LEFT JOIN catalog_localized l ON l.imdb_id=t.imdb_id WHERE ${clause}`).get(...params) as { n: number }).n);
     const order = input.sort === 'recent' ? 't.start_year DESC, t.votes DESC, t.rating DESC' : 't.votes DESC, t.rating DESC, t.start_year DESC';
