@@ -295,11 +295,21 @@ function catalogProgress(state?:CatalogSyncState){
   const index=catalogPhases.indexOf(state.phase);
   return{step:Math.max(0,index),steps,ratio:index<0?0:index/steps};
 }
+/**
+ * Un import « en cours » alors qu'aucun ne tourne signifie que le serveur a
+ * redémarré en plein travail : mieux vaut le dire que laisser une barre de
+ * progression figée.
+ */
+function catalogSources():CatalogSyncState[]{
+  return catalogStore.syncStates().map(state=>state.source==='imdb'&&state.status==='running'&&!imdbSyncPromise
+    ?{...state,status:'error' as const,phase:'Synchronisation interrompue',error:state.error??'Le serveur a redémarré pendant l’import. Relancez la synchronisation.'}
+    :state);
+}
 function lastCatalogSync(){return catalogStore.syncStates().find(state=>state.source==='imdb'&&state.status==='complete')?.completedAt}
 function nextCatalogSync(){if(!loadDb().settings.catalogSyncEnabled)return undefined;const last=lastCatalogSync();return new Date(last?Date.parse(last)+catalogSyncIntervalMs:Date.now()).toISOString()}
 function hasCatalogSyncSpace(){try{const disk=statfsSync(dataDir);return disk.bavail*disk.bsize>=Math.max(1,Number(process.env.SCENEROOT_CATALOG_MIN_FREE_GB??4))*1024**3}catch{return true}}
-function startImdbSync(){if(imdbSyncPromise)return imdbSyncPromise;if(!hasCatalogSyncSpace()){const message='Espace insuffisant pour importer les jeux de données IMDb.';catalogStore.setSync({source:'imdb',status:'error',phase:'Synchronisation bloquée',processed:0,error:message});app.log.warn(message);return Promise.resolve()}imdbSyncPromise=syncImdbCatalog(catalogStore,{onProgress:progress=>app.log.info(progress,'IMDb catalogue synchronization')}).catch(error=>{app.log.error({error},'IMDb catalogue synchronization failed')}).finally(()=>{imdbSyncPromise=null});return imdbSyncPromise}
-app.get('/api/catalog/status',async()=>({available:catalogStore.available,total:catalogStore.count(),syncing:Boolean(imdbSyncPromise),sources:catalogStore.syncStates(),progress:catalogProgress(catalogStore.syncStates().find(state=>state.source==='imdb')),databaseBytes:catalogStore.sizeBytes(),lastSyncAt:lastCatalogSync(),nextSyncAt:nextCatalogSync(),intervalHours:catalogSyncIntervalMs/3_600_000,tmdb:{configured:Boolean(tmdbApiKey()),source:tmdbConfiguredByEnvironment?'environment':tmdbApiKey()?'settings':'none'},architecture:{titles:'IMDb Datasets',frenchMetadata:'TMDB',episodes:'TMDB + TVmaze',identifiers:'Wikidata',fallback:'Wikipédia'}}));
+function startImdbSync(){if(imdbSyncPromise)return imdbSyncPromise;if(!hasCatalogSyncSpace()){const message='Espace insuffisant pour importer les jeux de données IMDb.';catalogStore.setSync({source:'imdb',status:'error',phase:'Synchronisation bloquée',processed:0,error:message});app.log.warn(message);return Promise.resolve()}imdbSyncPromise=syncImdbCatalog(catalogStore,{onProgress:progress=>app.log.info(progress,'IMDb catalogue synchronization')}).then(()=>{app.log.info('Mise à jour des statistiques SQLite');catalogStore.analyze()}).catch(error=>{app.log.error({error},'IMDb catalogue synchronization failed')}).finally(()=>{imdbSyncPromise=null});return imdbSyncPromise}
+app.get('/api/catalog/status',async()=>({available:catalogStore.available,total:catalogStore.count(),syncing:Boolean(imdbSyncPromise),sources:catalogSources(),progress:catalogProgress(catalogSources().find(state=>state.source==='imdb')),databaseBytes:catalogStore.sizeBytes(),lastSyncAt:lastCatalogSync(),nextSyncAt:nextCatalogSync(),intervalHours:catalogSyncIntervalMs/3_600_000,tmdb:{configured:Boolean(tmdbApiKey()),source:tmdbConfiguredByEnvironment?'environment':tmdbApiKey()?'settings':'none'},architecture:{titles:'IMDb Datasets',frenchMetadata:'TMDB',episodes:'TMDB + TVmaze',identifiers:'Wikidata',fallback:'Wikipédia'}}));
 app.post('/api/catalog/sync',async(_request,reply)=>{if(!catalogStore.available)return reply.code(503).send({error:'SQLite nécessite Node.js 22.5 ou supérieur'});if(!hasCatalogSyncSpace())return reply.code(507).send({error:'Au moins 4 Go libres sont requis pour synchroniser le catalogue IMDb.'});void startImdbSync();return reply.code(202).send({ok:true,status:'running'})});
 
 async function enrichCatalogSeason(parent:CatalogRow,seasonNumber:number){
@@ -614,8 +624,16 @@ async function enrichWikidataIds(rows:CatalogRow[]){
 
 async function localCatalog(page:number,limit:number,kind?:'film'|'serie',query='',genre='',recent=false):Promise<ProviderPage>{
   let result=catalogStore.query({kind,query,genre,page,limit,sort:recent?'recent':'popular',maxYear:new Date().getFullYear()});const key=tmdbApiKey();const staleBefore=Date.now()-30*24*60*60*1000;const needs=result.items.filter(row=>key?row.metadataSource!=='tmdb'||!row.metadataCheckedAt||Date.parse(row.metadataCheckedAt)<staleBefore:!row.metadataCheckedAt||Date.parse(row.metadataCheckedAt)<staleBefore);
-  if(needs.length){await Promise.allSettled(needs.slice(0,Math.min(8,limit)).map(row=>key?enrichTmdbRow(row,key):enrichWikipediaFallback(row)));result=catalogStore.query({kind,query,genre,page,limit,sort:recent?'recent':'popular',maxYear:new Date().getFullYear()})}void enrichWikidataIds(result.items);
-  return{items:result.items.map(localCatalogItem),hasMore:page*limit<result.total,source:key?'IMDb local + TMDB français':'IMDb local + Wikipédia (secours)',cachedAt:new Date().toISOString(),cacheState:'local',totalItems:result.total};
+  if(needs.length){
+    // L'enrichissement interroge TMDB : on lui laisse un instant pour que les
+    // titres français apparaissent tout de suite, puis on répond sans attendre.
+    // Ce qui n'a pas abouti se termine en arrière-plan et servira au prochain affichage.
+    const running=needs.slice(0,Math.min(8,limit)).map(row=>key?enrichTmdbRow(row,key):enrichWikipediaFallback(row));
+    await Promise.race([Promise.allSettled(running),new Promise(resolve=>setTimeout(resolve,1200))]);
+    result=catalogStore.query({kind,query,genre,page,limit,sort:recent?'recent':'popular',maxYear:new Date().getFullYear()});
+  }
+  void enrichWikidataIds(result.items);
+  return{items:result.items.map(localCatalogItem),hasMore:result.hasMore,source:key?'IMDb local + TMDB français':'IMDb local + Wikipédia (secours)',cachedAt:new Date().toISOString(),cacheState:'local',totalItems:result.total};
 }
 
 app.get('/admin',async(_request,reply)=>reply.redirect('/admin.html'));
@@ -636,6 +654,9 @@ if(existsSync(dist)){
 await app.listen({port,host:'0.0.0.0'});
 try{purgeExpiredGuests(true)}catch(error){app.log.warn({error},'Guest purge at startup failed')}
 writeMpvInput();
+// Sans statistiques, SQLite ignore l'index des titres : la recherche devient
+// interminable dès quelques centaines de milliers de lignes.
+if(catalogStore.needsAnalyze())setTimeout(()=>catalogStore.analyze(),5000).unref();
 void ensureTransmissionSession();
 setInterval(()=>{try{purgeExpiredGuests()}catch(error){app.log.warn({error},'Guest purge failed')}},5*60_000).unref();
 function warmRecentCatalog(){void catalogFor('film',1,12,true).catch(()=>{});void catalogFor('serie',1,12,true).catch(()=>{})}

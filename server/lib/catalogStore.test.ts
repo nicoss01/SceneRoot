@@ -53,6 +53,18 @@ describe('CatalogStore', () => {
     expect(page.total).toBe(2);
   });
 
+  it('reports a next page without counting the whole table', () => {
+    const store = fresh();
+    store.upsertTitles(Array.from({ length: 5 }, (_, index) => (
+      { imdbId:`tt${index}`, kind:'film' as const, primaryTitle:`Film ${index}`, startYear:2020, genres:[], adult:false, votes:index }
+    )), 'sync');
+    const first = store.query({ page:1, limit:2, sort:'popular' });
+    expect(first.items).toHaveLength(2);
+    expect(first.hasMore).toBe(true);
+    const last = store.query({ page:3, limit:2, sort:'popular' });
+    expect(last.hasMore).toBe(false);
+  });
+
   it('removes rows absent from a completed IMDb generation', () => {
     const store = fresh();
     store.upsertTitles([{ imdbId:'tt1', kind:'film', primaryTitle:'Old', genres:[], adult:false }], 'old');

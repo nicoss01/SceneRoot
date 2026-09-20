@@ -54,7 +54,7 @@ export async function syncImdbCatalog(store: CatalogStore, options: {
         startYear: optionalNumber(startYear), endYear: optionalNumber(endYear), runtimeMinutes: optionalNumber(runtime),
         genres: rawGenres === '\\N' ? [] : rawGenres.split(',').filter(Boolean).map(genre => GENRES[genre] ?? genre), adult: adult === '1' });
       processed++;
-      if (titles.length >= BATCH) { store.upsertTitles(titles.splice(0), token); if (processed % 50_000 === 0) report('Import des titres'); }
+      if (titles.length >= BATCH) { store.upsertTitles(titles.splice(0), token); if (processed % 20_000 === 0) report('Import des titres'); }
     }
     store.upsertTitles(titles, token); store.finishDataset('basics', token);
 
@@ -63,7 +63,7 @@ export async function syncImdbCatalog(store: CatalogStore, options: {
     for await (const line of await linesFromGzip(`${BASE}/title.ratings.tsv.gz`, fetcher)) {
       if (first) { first = false; continue; }
       const [imdbId, rating, votes] = line.split('\t'); ratings.push({ imdbId, rating:Number(rating)||0, votes:Number(votes)||0 }); processed++;
-      if (ratings.length >= BATCH) { store.upsertRatings(ratings.splice(0)); if (processed % 50_000 === 0) report('Import des notes'); }
+      if (ratings.length >= BATCH) { store.upsertRatings(ratings.splice(0)); if (processed % 20_000 === 0) report('Import des notes'); }
     }
     store.upsertRatings(ratings);
 
@@ -73,7 +73,7 @@ export async function syncImdbCatalog(store: CatalogStore, options: {
       if (first) { first = false; continue; }
       const [imdbId, parentImdbId, season, episode] = line.split('\t');
       episodes.push({ imdbId, parentImdbId, season:optionalNumber(season), episode:optionalNumber(episode) }); processed++;
-      if (episodes.length >= BATCH) { store.upsertEpisodes(episodes.splice(0), token); if (processed % 50_000 === 0) report('Import des saisons et épisodes'); }
+      if (episodes.length >= BATCH) { store.upsertEpisodes(episodes.splice(0), token); if (processed % 20_000 === 0) report('Import des saisons et épisodes'); }
     }
     store.upsertEpisodes(episodes, token); store.finishDataset('episodes', token);
     const completedAt = new Date().toISOString();
