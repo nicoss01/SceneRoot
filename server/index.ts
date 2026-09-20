@@ -187,10 +187,14 @@ async function tmdbTrending(kind:'film'|'serie',page:number,limit:number):Promis
   const url=new URL(`https://api.themoviedb.org/3/trending/${kind==='serie'?'tv':'movie'}/week`);
   url.searchParams.set('api_key',key);url.searchParams.set('language','fr-FR');url.searchParams.set('page',String(page));
   const result=await cachedJson<{results:Record<string,unknown>[];total_pages:number}>(`catalog-trending-tmdb-${kind}-${page}`,url.toString(),6*60*60*1000);
-  return{items:result.data.results.slice(0,limit).map(item=>normalizeTmdbCatalog(item,kind)),hasMore:page<Number(result.data.total_pages??1),source:'Tendances TMDB',cachedAt:result.cachedAt,cacheState:result.state};
+  // Une sortie de moins d'un mois porte la pastille « Nouveau » : sans elle,
+  // l'accueil n'aurait plus aucun repère de nouveauté.
+  const fresh=new Date(Date.now()-30*24*60*60*1000).toISOString().slice(0,10);
+  const items=result.data.results.slice(0,limit).map(item=>{const entry=normalizeTmdbCatalog(item,kind);return entry.releaseDate&&entry.releaseDate>=fresh?{...entry,badge:'new' as const}:entry});
+  return{items,hasMore:page<Number(result.data.total_pages??1),source:'Tendances TMDB',cachedAt:result.cachedAt,cacheState:result.state};
 }
 async function catalogFor(kind:'film'|'serie',page:number,limit:number,sort:CatalogSort='popular'){
-  if(catalogStore.count(kind)>0)return localCatalog(page,limit,kind,'','',sort==='recent');
+  if(catalogStore.count(kind)>0)return localCatalog(page,limit,kind,'','',sort);
   if(tmdbApiKey())return sort==='recent'?tmdbRecent(kind,page,limit):sort==='trending'?tmdbTrending(kind,page,limit):tmdbCatalog(kind,page,limit);
   return{items:[],hasMore:false,source:'Catalogue IMDb en attente',cachedAt:new Date(0).toISOString(),cacheState:'local'};
 }
@@ -294,7 +298,7 @@ app.get<{Querystring:{kind?:'film'|'serie';page?:string;limit?:string;genre?:str
   const page=Math.max(1,Number(request.query.page??1));const limit=Math.max(1,Math.min(30,Number(request.query.limit??12)));const sort:CatalogSort=request.query.sort==='recent'?'recent':request.query.sort==='trending'?'trending':'popular';const recent=sort==='recent';
   try{
     let result:ProviderPage;
-    if(catalogStore.count()>0)result=await localCatalog(page,limit,request.query.kind,request.query.q?.trim()??'',request.query.genre?.trim()??'',recent);
+    if(catalogStore.count()>0)result=await localCatalog(page,limit,request.query.kind,request.query.q?.trim()??'',request.query.genre?.trim()??'',sort);
     else if(request.query.q?.trim())result=page===1?await searchedCatalog(request.query.q.trim(),request.query.kind):{items:[],hasMore:false,source:'Catalogue',cachedAt:new Date().toISOString(),cacheState:'hit'};
     else if(request.query.kind)result=await catalogFor(request.query.kind,page,limit,sort);
     else{const filmLimit=Math.ceil(limit/2);const serieLimit=limit-filmLimit;const[films,series]=await Promise.all([catalogFor('film',page,filmLimit,sort),catalogFor('serie',page,serieLimit,sort)]);const items:CatalogItem[]=[];for(let index=0;index<Math.max(films.items.length,series.items.length);index++){if(films.items[index])items.push(films.items[index]);if(series.items[index])items.push(series.items[index])}result={items:items.slice(0,limit),hasMore:films.hasMore||series.hasMore,source:`${films.source} + ${series.source}`,cachedAt:films.cachedAt>series.cachedAt?films.cachedAt:series.cachedAt,cacheState:films.cacheState===series.cacheState?films.cacheState:`${films.cacheState}/${series.cacheState}`}}
@@ -331,7 +335,7 @@ function lastCatalogSync(){return catalogStore.syncStates().find(state=>state.so
 function nextCatalogSync(){if(!loadDb().settings.catalogSyncEnabled)return undefined;const last=lastCatalogSync();return new Date(last?Date.parse(last)+catalogSyncIntervalMs:Date.now()).toISOString()}
 function hasCatalogSyncSpace(){try{const disk=statfsSync(dataDir);return disk.bavail*disk.bsize>=Math.max(1,Number(process.env.SCENEROOT_CATALOG_MIN_FREE_GB??4))*1024**3}catch{return true}}
 function startImdbSync(){if(imdbSyncPromise)return imdbSyncPromise;if(!hasCatalogSyncSpace()){const message='Espace insuffisant pour importer les jeux de données IMDb.';catalogStore.setSync({source:'imdb',status:'error',phase:'Synchronisation bloquée',processed:0,error:message});app.log.warn(message);return Promise.resolve()}imdbSyncStop=new AbortController();imdbSyncPromise=syncImdbCatalog(catalogStore,{signal:imdbSyncStop.signal,onProgress:progress=>app.log.info(progress,'IMDb catalogue synchronization')}).then(()=>{app.log.info('Mise à jour des statistiques SQLite');catalogStore.analyze();const indexed=catalogStore.rebuildSearchIndex();app.log.info({indexed},'Index de recherche reconstruit')}).catch(error=>{app.log.error({error},'IMDb catalogue synchronization failed')}).finally(()=>{imdbSyncPromise=null});return imdbSyncPromise}
-app.get('/api/catalog/status',async()=>({available:catalogStore.available,total:catalogStore.count(),syncing:Boolean(imdbSyncPromise),sources:catalogSources(),progress:catalogProgress(catalogSources().find(state=>state.source==='imdb')),databaseBytes:catalogStore.sizeBytes(),lastSyncAt:lastCatalogSync(),nextSyncAt:nextCatalogSync(),intervalHours:catalogSyncIntervalMs/3_600_000,tmdb:{configured:Boolean(tmdbApiKey()),source:tmdbConfiguredByEnvironment?'environment':tmdbApiKey()?'settings':'none'},architecture:{titles:'IMDb Datasets',frenchMetadata:'TMDB',episodes:'TMDB + TVmaze',identifiers:'Wikidata',fallback:'Wikipédia'}}));
+app.get('/api/catalog/status',async()=>({available:catalogStore.available,total:catalogStore.count(),rated:catalogStore.ratedCount(),syncing:Boolean(imdbSyncPromise),sources:catalogSources(),progress:catalogProgress(catalogSources().find(state=>state.source==='imdb')),databaseBytes:catalogStore.sizeBytes(),lastSyncAt:lastCatalogSync(),nextSyncAt:nextCatalogSync(),intervalHours:catalogSyncIntervalMs/3_600_000,tmdb:{configured:Boolean(tmdbApiKey()),source:tmdbConfiguredByEnvironment?'environment':tmdbApiKey()?'settings':'none'},architecture:{titles:'IMDb Datasets',frenchMetadata:'TMDB',episodes:'TMDB + TVmaze',identifiers:'Wikidata',fallback:'Wikipédia'}}));
 app.post('/api/catalog/sync/stop',async(_request,reply)=>{
   const state=catalogStore.syncStates().find(entry=>entry.source==='imdb');
   if(!imdbSyncPromise){
@@ -877,8 +881,16 @@ async function enrichWikidataIds(rows:CatalogRow[]){
   try{const response=await fetch(url,{headers:{Accept:'application/sparql-results+json','User-Agent':'SceneRoot/0.1'},signal:AbortSignal.timeout(12_000)});if(!response.ok)return;const data=await response.json() as {results?:{bindings?:Array<{item?:{value?:string};imdb?:{value?:string};tmdbMovie?:{value?:string};tmdbTv?:{value?:string}}>}};const found=new Set<string>();for(const binding of data.results?.bindings??[]){const imdbId=binding.imdb?.value;const qid=binding.item?.value?.split('/').pop();if(imdbId&&qid){found.add(imdbId);catalogStore.upsertLocalized({imdbId,wikidataId:qid,tmdbId:Number(binding.tmdbMovie?.value??binding.tmdbTv?.value)||undefined,source:'wikidata'})}}for(const imdbId of missing)if(!found.has(imdbId))catalogStore.upsertLocalized({imdbId,source:'wikidata'})}catch(error){app.log.debug({error},'Wikidata identifier mapping failed')}
 }
 
-async function localCatalog(page:number,limit:number,kind?:'film'|'serie',query='',genre='',recent=false):Promise<ProviderPage>{
-  let result=catalogStore.query({kind,query,genre,page,limit,sort:recent?'recent':'popular',maxYear:new Date().getFullYear()});
+/** Fenêtre considérée comme « tendance » dans le catalogue local, en années. */
+const TRENDING_YEARS=3;
+async function localCatalog(page:number,limit:number,kind?:'film'|'serie',query='',genre='',sort:CatalogSort|boolean='popular'):Promise<ProviderPage>{
+  // L'appelant historique passait un booléen « recent ».
+  const wanted:CatalogSort=sort===true?'recent':sort===false?'popular':sort;
+  // « Tendance » n'a de sens que sur les titres récents : les plus votés parmi
+  // eux, sans quoi le classement se confondrait avec « populaire ».
+  const minYear=wanted==='trending'?new Date().getFullYear()-TRENDING_YEARS:undefined;
+  const recent=wanted==='recent';
+  let result=catalogStore.query({kind,query,genre,page,limit,sort:recent?'recent':'popular',minYear,maxYear:new Date().getFullYear()});
   const key=tmdbApiKey();const omdb=omdbApiKey();const staleBefore=Date.now()-30*24*60*60*1000;
   // Une fiche est à compléter tant qu'il lui manque une affiche ou un résumé,
   // ou que son dernier passage remonte à plus d'un mois.
@@ -896,10 +908,10 @@ async function localCatalog(page:number,limit:number,kind?:'film'|'serie',query=
     // Ce qui n'a pas abouti se termine en arrière-plan et servira au prochain affichage.
     const running=needs.slice(0,Math.min(8,limit)).map(enrichOne);
     await Promise.race([Promise.allSettled(running),new Promise(resolve=>setTimeout(resolve,1200))]);
-    result=catalogStore.query({kind,query,genre,page,limit,sort:recent?'recent':'popular',maxYear:new Date().getFullYear()});
+    result=catalogStore.query({kind,query,genre,page,limit,sort:recent?'recent':'popular',minYear,maxYear:new Date().getFullYear()});
   }
   void enrichWikidataIds(result.items);
-  return{items:result.items.map(localCatalogItem),hasMore:result.hasMore,source:key?'IMDb local + TMDB français':'IMDb local + Wikipédia (secours)',cachedAt:new Date().toISOString(),cacheState:'local',totalItems:result.total};
+  return{items:result.items.map(localCatalogItem),hasMore:result.hasMore,source:`${key?'IMDb local + TMDB français':'IMDb local + Wikipédia (secours)'}${wanted==='trending'?` · depuis ${new Date().getFullYear()-TRENDING_YEARS}`:''}`,cachedAt:new Date().toISOString(),cacheState:'local',totalItems:result.total};
 }
 
 app.get('/admin',async(_request,reply)=>reply.redirect('/admin.html'));

@@ -129,9 +129,21 @@ end
 
 -- ── Dessin ──────────────────────────────────────────────────────────────────
 
+-- Au-delà, la boîte dépasserait le bas de l'écran : la liste défile autour de
+-- la ligne choisie plutôt que d'être dessinée hors champ.
+local MENU_ROWS = 16
+
 local function draw_menu(ass)
   local width, left, top = 760, 220, 150
-  local height = 120 + #menu.items * 46
+  local total = #menu.items
+  local rows = math.min(total, MENU_ROWS)
+  -- Fenêtre centrée sur la sélection, recadrée aux bords de la liste.
+  local first = 1
+  if total > rows then
+    first = math.max(1, math.min(menu.index - math.floor(rows / 2), total - rows + 1))
+  end
+  local last = math.min(total, first + rows - 1)
+  local height = 120 + rows * 46
   ass:new_event()
   ass:append('{\\an7\\bord0\\shad0\\1c&H120A02&\\1a&H1A&}')
   ass:pos(0, 0)
@@ -145,7 +157,8 @@ local function draw_menu(ass)
   ass:append('Pistes audio et sous-titres')
 
   local y = top + 84
-  for index, item in ipairs(menu.items) do
+  for index = first, last do
+    local item = menu.items[index]
     ass:new_event()
     if item.header then
       ass:append(string.format('{\\an7\\bord0\\shad0\\fs28\\1c%s}', MUTED))
@@ -158,6 +171,20 @@ local function draw_menu(ass)
       ass:append((current and '▶  ' or '    ') .. (item.selected and '● ' or '○ ') .. escape(item.text))
     end
     y = y + 46
+  end
+
+  -- Rappel qu'il reste des pistes au-dessus ou au-dessous de la fenêtre.
+  if first > 1 then
+    ass:new_event()
+    ass:append(string.format('{\\an7\\bord0\\shad0\\fs26\\1c%s}', MUTED))
+    ass:pos(left + width - 52, top + 84)
+    ass:append('▲')
+  end
+  if last < total then
+    ass:new_event()
+    ass:append(string.format('{\\an7\\bord0\\shad0\\fs26\\1c%s}', MUTED))
+    ass:pos(left + width - 52, top + height - 78)
+    ass:append('▼')
   end
 
   ass:new_event()

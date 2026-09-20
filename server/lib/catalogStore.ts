@@ -58,6 +58,8 @@ export type CatalogQuery = {
   sort?: 'popular' | 'recent';
   /** Année maximale acceptée : écarte les titres à paraître. */
   maxYear?: number;
+  /** Année minimale acceptée : restreint le classement aux titres récents. */
+  minYear?: number;
 };
 
 export type CatalogSyncState = {
@@ -289,6 +291,21 @@ export class CatalogStore {
     return value;
   }
 
+  /**
+   * Titres portant des votes IMDb. Sans eux le classement par popularité n'a
+   * rien à ordonner : c'est le symptôme d'un import interrompu avant les notes.
+   */
+  ratedCount(): number {
+    if (!this.db) return 0;
+    const cached = this.counts.get('rated');
+    if (cached !== undefined) return cached;
+    try {
+      const value = Number((this.db.prepare('SELECT COUNT(*) AS n FROM catalog_titles WHERE browsable = 1 AND votes > 0').get() as { n: number }).n);
+      this.counts.set('rated', value);
+      return value;
+    } catch { return 0 }
+  }
+
   query(input: CatalogQuery): { items: CatalogRow[]; total: number; hasMore: boolean } {
     if (!this.db) return { items: [], total: 0, hasMore: false };
     const base = ['t.browsable = 1'];
@@ -298,6 +315,7 @@ export class CatalogStore {
     // Le tri « récent » remonte d'abord les titres annoncés : sans ce filtre en
     // SQL, une page entière pouvait être écartée après coup et sortir vide.
     if (input.maxYear) { base.push('(t.start_year IS NULL OR t.start_year <= ?)'); baseParams.push(input.maxYear); }
+    if (input.minYear) { base.push('t.start_year >= ?'); baseParams.push(input.minYear); }
 
     const search = input.query?.trim();
     const escaped = search?.replace(/[\\%_]/g, value => '\\' + value);
