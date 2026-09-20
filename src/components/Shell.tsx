@@ -1,4 +1,4 @@
-import { Clock3, Compass, Download, Film, FolderHeart, Home, Search, Settings, Sparkles, Tv, Wifi } from 'lucide-react';
+import { Clock3, Compass, Download, Film, Home, Search, Settings, Sparkles, Tv, Wifi } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useEffect, useRef, useState } from 'react';
 import { Brand } from './Brand';
@@ -7,7 +7,7 @@ import type { Profile } from '../types';
 
 const links = [
   ['/', Home, 'Accueil'], ['/films', Film, 'Films'], ['/series', Tv, 'Séries'], ['/discover', Compass, 'Découvrir'],
-  ['/tonight', Sparkles, 'Ce soir'], ['/roots', Clock3, 'Mes Roots'], ['/library', FolderHeart, 'Ma médiathèque'], ['/downloads', Download, 'Téléchargements'], ['/search', Search, 'Rechercher'], ['/settings', Settings, 'Paramètres']
+  ['/tonight', Sparkles, 'Ce soir'], ['/roots', Clock3, 'Mes Roots'], ['/downloads', Download, 'Téléchargements'], ['/search', Search, 'Rechercher'], ['/settings', Settings, 'Paramètres']
 ] as const;
 
 export function Shell({ profile, onSwitchProfile, children }: { profile: Profile; onSwitchProfile: () => void; children: React.ReactNode }) {

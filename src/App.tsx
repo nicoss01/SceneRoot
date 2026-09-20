@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, BarChart3, Check, ChevronDown, ChevronRight, ChevronsUp, ChevronUp, Clock3, Download, Eye, EyeOff, Film, FolderOpen, HardDrive, Heart, Hourglass, Lock, Monitor, Pause, Pencil, Play, Plus, RefreshCw, RotateCcw, Search, ShieldCheck, Sparkles, Star, Subtitles, Timer, Trash2, Tv, Users, Volume2, Wifi, WandSparkles, X } from 'lucide-react';
+import { ArrowLeft, BarChart3, FolderHeart, Check, ChevronDown, ChevronRight, ChevronsUp, ChevronUp, Clock3, Download, Eye, EyeOff, Film, FolderOpen, HardDrive, Heart, Hourglass, Lock, Monitor, Pause, Pencil, Play, Plus, RefreshCw, RotateCcw, Search, ShieldCheck, Sparkles, Star, Subtitles, Timer, Trash2, Tv, Users, Volume2, Wifi, WandSparkles, X } from 'lucide-react';
 import { Brand } from './components/Brand';
 import { MediaCard } from './components/MediaCard';
 import { MetadataMatcher } from './components/MetadataMatcher';
@@ -20,7 +20,7 @@ import { usePreferences } from './hooks/usePreferences';
 import { useOpinion } from './hooks/useOpinion';
 import { useRemoteUrl } from './hooks/useRemoteUrl';
 import { nextInDirection, type Direction } from './lib/spatial';
-import { posterUrl } from './lib/image';
+import { artworkUrl, placeholderFor, posterUrl } from './lib/image';
 import { useWatched } from './context/watched';
 import { useEscapeClose } from './hooks/useEscapeClose';
 import { useModalFocus } from './hooks/useModalFocus';
@@ -86,9 +86,9 @@ function Section({ title, items, onOpen, onDismiss, wide = false }: { title: str
   return <section><div className="section-title"><h2>{title}</h2><button>Tout voir <ChevronRight size={18}/></button></div><div className="rail">{items.map((m, i) => <MediaCard key={m.id} item={m} active={i === 0} wide={wide} onOpen={() => onOpen(m)} onDismiss={onDismiss ? () => onDismiss(m) : undefined} />)}</div></section>;
 }
 
-function RemoteSection({ title, onOpen, kind, recent }: { title:string; onOpen:(item:MediaItem)=>void; kind?:'film'|'serie'; recent?:boolean }) {
+function RemoteSection({ title, onOpen, kind, sort='popular' }: { title:string; onOpen:(item:MediaItem)=>void; kind?:'film'|'serie'; sort?:CatalogSort }) {
   const sectionRef=useRef<HTMLElement>(null);const[visible,setVisible]=useState(false);
-  const catalog=useCatalog(kind,6,visible,'','',recent?'recent':'');const {items,loading,source,refresh}=catalog;
+  const catalog=useCatalog(kind,6,visible,'','',sort);const {items,loading,source,refresh}=catalog;
   useEffect(()=>{const node=sectionRef.current;if(!node)return;const observer=new IntersectionObserver(entries=>{if(entries[0]?.isIntersecting){setVisible(true);observer.disconnect()}},{rootMargin:'320px'});observer.observe(node);return()=>observer.disconnect()},[]);
   useEffect(()=>{if(!visible)return;const interval=setInterval(()=>refresh(),24*60*60*1000);return()=>clearInterval(interval)},[visible,refresh]);
   return <section ref={sectionRef}><div className="section-title"><h2>{title}</h2><span>{loading?'Chargement…':source?`Source : ${source}`:''}</span></div>{items.length?<div className="rail">{items.map((item,index)=><MediaCard key={item.id} item={item} active={index===0} onOpen={()=>onOpen(item)}/>)}</div>:!loading&&<div className="library-empty compact"><Film/><p>Aucun titre disponible pour le moment.</p></div>}</section>;
@@ -101,30 +101,43 @@ function HomePage({profile}:{profile:Profile}) {
   return <>
     <div className="welcome home-welcome"><h1>Bonsoir, {profile.name}</h1><p>De belles histoires vous attendent.</p></div>
     {resumeItems.length>0&&<Section title="Reprendre la lecture" items={resumeItems.slice(0,6)} onOpen={open} onDismiss={media=>void resume.dismiss(media.id)} wide />}
-    <RemoteSection title="Dernières sorties" onOpen={open} recent />
-    <RemoteSection title="Films à découvrir" onOpen={open} kind="film" />
-    <RemoteSection title="Séries à découvrir" onOpen={open} kind="serie" />
+    <RemoteSection title="Films tendance" onOpen={open} kind="film" sort="trending" />
+    <RemoteSection title="Séries tendance" onOpen={open} kind="serie" sort="trending" />
     <section><div className="section-title"><h2>Explorer par genre</h2><span>{allGenres.length} genres films et séries</span></div><div className="genres">{allGenres.map((label,i) => {const Icon=i%4===0?Film:i%4===1?Tv:i%4===2?Sparkles:Heart;return <button className={`genre focusable ${i===0?'is-active':''}`} key={label} onClick={()=>navigate(`/search?genre=${encodeURIComponent(label)}`)}><Icon />{label}</button>})}</div></section>
   </>;
 }
 
+/** Classement proposé sur les pages Films et Séries. */
+type CatalogSort='popular'|'trending'|'recent';
+const browseSorts:Array<[CatalogSort,string]>=[['popular','Populaires'],['trending','Tendance'],['recent','Récents']];
 function BrowsePage({ kind, title }: { kind?: 'film'|'serie'; title: string }) {
-  const navigate=useNavigate();const sentinel=useRef<HTMLDivElement>(null);const catalog=useCatalog(kind,15,true);const list=catalog.items;
+  const navigate=useNavigate();const sentinel=useRef<HTMLDivElement>(null);
+  const [sort,setSort]=useState<CatalogSort>('popular');
+  const catalog=useCatalog(kind,15,true,'','',sort);const list=catalog.items;
   useEffect(()=>{const node=sentinel.current;if(!node)return;const observer=new IntersectionObserver(entries=>{if(entries[0]?.isIntersecting&&!catalog.loading&&catalog.hasMore)void catalog.loadMore()},{rootMargin:'500px'});observer.observe(node);return()=>observer.disconnect()},[catalog.hasMore,catalog.loadMore,catalog.loading]);
-  return <><div className="welcome"><h1>{title}</h1><p>{catalog.items.length?`${catalog.items.length} titres chargés depuis ${catalog.source}.`:'Le catalogue est encore vide.'}</p></div><div className="grid">{list.map((item,index)=><MediaCard item={item} active={index===0} key={item.id} onOpen={()=>navigate(`/title/${item.id}`)}/>)}</div>{!catalog.loading&&!catalog.error&&!list.length&&<div className="library-empty"><Film/><h2>Aucun contenu disponible</h2><p>Synchronisez le catalogue IMDb ou ajoutez des médias à votre bibliothèque.</p></div>}<div className="catalog-sentinel" ref={sentinel}>{catalog.loading&&<><i/>Chargement de la suite…</>}{catalog.error&&<button className="secondary" onClick={()=>catalog.loadMore()}>Réessayer le chargement</button>}{!catalog.hasMore&&catalog.items.length>0&&<span>Fin du catalogue</span>}</div></>;
+  return <><div className="welcome"><h1>{title}</h1><p>{catalog.items.length?`${catalog.items.length} titres chargés depuis ${catalog.source}.`:'Le catalogue est encore vide.'}</p></div>
+    <div className="browse-sort">{browseSorts.map(([value,label])=><button key={value} className={`chip focusable ${sort===value?'is-on':''}`} onClick={()=>setSort(value)}>{label}</button>)}</div><div className="grid">{list.map((item,index)=><MediaCard item={item} active={index===0} key={item.id} onOpen={()=>navigate(`/title/${item.id}`)}/>)}</div>{!catalog.loading&&!catalog.error&&!list.length&&<div className="library-empty"><Film/><h2>Aucun contenu disponible</h2><p>Synchronisez le catalogue IMDb ou ajoutez des médias à votre bibliothèque.</p></div>}<div className="catalog-sentinel" ref={sentinel}>{catalog.loading&&<><i/>Chargement de la suite…</>}{catalog.error&&<button className="secondary" onClick={()=>catalog.loadMore()}>Réessayer le chargement</button>}{!catalog.hasMore&&catalog.items.length>0&&<span>Fin du catalogue</span>}</div></>;
 }
 
-function LibraryPage() {
-  const navigate=useNavigate();const library=useLibrary();const[matchingId,setMatchingId]=useState<string|null>(null);const[scanning,setScanning]=useState(false);
+/**
+ * Contenu de la médiathèque, réutilisé tel quel dans l'onglet « Téléchargés »
+ * de Mes Roots : c'est la même liste, avec un filtre films/séries.
+ */
+function LibraryView({heading=true}:{heading?:boolean}) {
+  const navigate=useNavigate();const library=useLibrary();const[kindFilter,setKindFilter]=useState<'all'|'film'|'serie'>('all');const[matchingId,setMatchingId]=useState<string|null>(null);const[scanning,setScanning]=useState(false);
   const unresolved=library.groups.filter(group=>!group.metadata);const matching=library.groups.find(group=>group.id===matchingId);
   const scan=async()=>{setScanning(true);try{await fetch('/api/library/scan',{method:'POST'});await library.refresh()}finally{setScanning(false)}};
-  return <><div className="library-heading"><div className="welcome"><h1>Ma médiathèque</h1><p>{library.items.length} titre{library.items.length>1?'s':''} indexé{library.items.length>1?'s':''} · {unresolved.length} à identifier</p></div><div><button className="secondary" onClick={()=>void scan()} disabled={scanning}><RefreshCw className={scanning?'spin':''}/>{scanning?'Analyse…':'Analyser'}</button>{unresolved.length>0&&<button className="primary" onClick={()=>setMatchingId(unresolved[0].id)}><Search/>Identifier les médias</button>}</div></div>
+  const shown=library.items.filter(item=>kindFilter==='all'||item.kind===kindFilter);
+  return <>{heading&&<div className="library-heading"><div className="welcome"><h1>Ma médiathèque</h1><p>{library.items.length} titre{library.items.length>1?'s':''} indexé{library.items.length>1?'s':''} · {unresolved.length} à identifier</p></div><div><button className="secondary" onClick={()=>void scan()} disabled={scanning}><RefreshCw className={scanning?'spin':''}/>{scanning?'Analyse…':'Analyser'}</button>{unresolved.length>0&&<button className="primary" onClick={()=>setMatchingId(unresolved[0].id)}><Search/>Identifier les médias</button>}</div></div>}
     {library.loading&&<div className="library-loading"><i/>Lecture de la bibliothèque…</div>}
     {library.error&&<div className="library-empty"><FolderOpen/><h2>Bibliothèque indisponible</h2><p>{library.error}</p><button className="secondary" onClick={()=>void library.refresh()}>Réessayer</button></div>}
     {!library.loading&&!library.error&&!library.items.length&&<div className="library-empty"><FolderOpen/><h2>Aucun média indexé</h2><p>Connectez un disque ou configurez un partage réseau, puis lancez une analyse.</p><button className="primary" onClick={()=>void scan()}><RefreshCw/>Analyser maintenant</button></div>}
-    {library.items.length>0&&<div className="grid library-grid">{library.items.map((item,index)=><div className="library-item" key={item.id}><MediaCard item={item} active={index===0} onOpen={()=>navigate(`/title/${item.id}`)}/><div className="library-badges"><span>{item.versionCount} version{item.versionCount!==1?'s':''}</span>{item.episodeCount? <span>{item.episodeCount} épisodes</span>:null}{!item.matched&&<button onClick={()=>setMatchingId(item.id)}>À identifier</button>}</div></div>)}</div>}
+    {library.items.length>0&&<div className="browse-sort">{([['all','Tous'],['film','Films'],['serie','Séries']] as const).map(([value,label])=><button key={value} className={`chip focusable ${kindFilter===value?'is-on':''}`} onClick={()=>setKindFilter(value)}>{label}</button>)}</div>}
+    {shown.length>0&&<div className="grid library-grid">{shown.map((item,index)=><div className="library-item" key={item.id}><MediaCard item={item} active={index===0} onOpen={()=>navigate(`/title/${item.id}`)}/><div className="library-badges"><span>{item.versionCount} version{item.versionCount!==1?'s':''}</span>{item.episodeCount? <span>{item.episodeCount} épisodes</span>:null}{!item.matched&&<button onClick={()=>setMatchingId(item.id)}>À identifier</button>}</div></div>)}</div>}
     {matching&&<MetadataMatcher group={matching} onClose={()=>setMatchingId(null)} onMatched={library.refresh}/>}</>;
 }
+
+function LibraryPage(){ return <LibraryView/> }
 
 /** Dernière recherche, mémorisée pour ce navigateur seulement. */
 const LAST_SEARCH_KEY='sceneroot-last-search';
@@ -267,7 +280,7 @@ function DetailPage({profile}:{profile:Profile}) {
   // téléchargement) pour que la télécommande soit immédiatement opérante.
   const primaryActionRef=useRef<HTMLButtonElement>(null);
   useEffect(()=>{primaryActionRef.current?.focus()},[item.id,isLocal]);
-  return <div className="detail" style={{ '--a': item.palette[0], '--b': item.palette[1], backgroundImage:`linear-gradient(90deg,rgba(1,7,14,.94) 8%,rgba(1,7,14,.28)), url('${posterUrl(item.art)??'/assets/sceneroot-landscape.jpg'}')` } as React.CSSProperties}>
+  return <div className="detail" style={{ '--a': item.palette[0], '--b': item.palette[1], backgroundImage:`linear-gradient(90deg,rgba(1,7,14,.94) 8%,rgba(1,7,14,.28)), url('${artworkUrl(item.art,item.kind)}')` } as React.CSSProperties}>
     <button className="back focusable" onClick={()=>navigate(-1)}><ArrowLeft/> Retour</button>
     <div className="detail__symbol">{item.symbol}<i/></div><div className="detail__content"><span className="eyebrow">{item.kind === 'film' ? 'FILM' : 'SÉRIE'} · {item.year}</span><h1>{item.title}</h1>
     <div className="detail__meta"><Star fill="currentColor"/> {item.rating>0?`${item.rating}/10`:'Non noté'} <span>{item.duration}</span><span>{item.quality}</span></div><p>{item.description}</p><div className="detail__genres">{item.genres.map(g=><span key={g}>{g}</span>)}</div>{item.sourceUrl&&<a className="source-link" href={item.sourceUrl} target="_blank" rel="noreferrer">Informations : {item.informationSource??(item.source==='tvmaze'?'TVmaze':item.source==='wikipedia'?'Wikipédia':'TMDB')}</a>}
@@ -300,7 +313,7 @@ function DetailPage({profile}:{profile:Profile}) {
         const started=!seen&&episode.progress>0.02;
         return <div className={`episode-row ${episode.id===nextId&&playable?'is-next':''}`} key={episode.id}>
           <div className="episode-still" style={{'--a':item.palette[0],'--b':item.palette[1]} as React.CSSProperties}>
-            {episode.still?<img src={posterUrl(episode.still)} alt="" loading="lazy" decoding="async" onError={event=>{event.currentTarget.style.display='none'}}/>:<span>{item.symbol}</span>}
+            <img src={artworkUrl(episode.still,'serie')} alt="" loading="lazy" decoding="async" onError={event=>{event.currentTarget.onerror=null;event.currentTarget.src=placeholderFor('serie')}}/>
             {seen&&<span className="episode-state is-seen" title="Déjà vu"><Check size={16}/></span>}
             {started&&<span className="episode-state is-started" title={`Commencé · ${Math.round(episode.progress*100)} %`}><Eye size={16}/></span>}
             {started&&<i className="episode-progress" style={{width:`${Math.min(100,Math.round(episode.progress*100))}%`}}/>}
@@ -322,6 +335,9 @@ function DetailPage({profile}:{profile:Profile}) {
 // On ne propose de noter qu'à la fin d'un film : quitter au bout de vingt
 // minutes n'est pas un avis sur l'œuvre.
 const RATE_WINDOW_SECONDS=600;
+/** Dernières secondes d'un épisode où l'on propose d'enchaîner, et délai avant bascule. */
+const NEXT_EPISODE_WINDOW=20;
+const NEXT_EPISODE_DELAY=10;
 function reachedEnding(position:number,duration:number){return duration>0&&position>=duration-RATE_WINDOW_SECONDS}
 
 function PlayerPage({profile}:{profile:Profile}) {
@@ -347,13 +363,38 @@ function PlayerPage({profile}:{profile:Profile}) {
   const seek:React.MouseEventHandler<HTMLDivElement>=event=>{if(!running||duration<=0)return;const rect=event.currentTarget.getBoundingClientRect();const ratio=Math.min(1,Math.max(0,(event.clientX-rect.left)/rect.width));void control('seek-to',Math.round(ratio*duration))};
   const audioTracks=status?.audioTracks??[]; const subtitleTracks=status?.subtitleTracks??[];
   const nearEnd=running&&duration>0&&position>=duration-25;
+  // Fin d'épisode : on enchaîne sur le suivant après un décompte, affiché par
+  // mpv puisque c'est lui qui occupe l'écran. Reculer dans l'épisode annule.
+  const [countdown,setCountdown]=useState<number|null>(null);
+  const countdownRef=useRef<number|null>(null);
+  const inNextWindow=Boolean(running&&nextEp&&duration>0&&duration-position<=NEXT_EPISODE_WINDOW);
+  useEffect(()=>{
+    if(!inNextWindow||!nextEp){
+      if(countdownRef.current!==null){countdownRef.current=null;setCountdown(null);void control('next-countdown',-1)}
+      return;
+    }
+    if(countdownRef.current!==null)return;
+    const tick=(value:number)=>{countdownRef.current=value;setCountdown(value);void control('next-countdown',value)};
+    tick(NEXT_EPISODE_DELAY);
+    const timer=setInterval(()=>{
+      const next=(countdownRef.current??0)-1;
+      if(next>0){tick(next);return}
+      clearInterval(timer);
+      countdownRef.current=null;setCountdown(null);
+      void control('next-countdown',-1);
+      // L'épisode quitté est marqué terminé avant de lancer le suivant.
+      if(id&&durationRef.current>0)void fetch(`/api/playback/${encodeURIComponent(profile.id)}/${encodeURIComponent(id)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({position:durationRef.current,duration:durationRef.current})});
+      advance(nextEp.id);
+    },1000);
+    return()=>clearInterval(timer);
+  },[inNextWindow,nextEp,control,advance,id,profile.id]);
   const chromeVisible=usePlayerChrome({enabled:isLocal,onSeekBy:delta=>{if(running&&duration>0)void control('seek-to',Math.min(duration,Math.max(0,positionRef.current+delta)))},onTogglePlay:()=>{if(running)void control(playing?'pause':'play')},onExit:leave});
   return <div className={`player ${chromeVisible?'':'chrome-hidden'}`} style={{ '--a': item.palette[0], '--b': item.palette[1], backgroundImage:`linear-gradient(105deg,rgba(1,7,14,.5),transparent 60%), url('${posterUrl(item.art)??'/assets/sceneroot-landscape.jpg'}')` } as React.CSSProperties}>
     <div className="player__scene"><span>{item.symbol}</span><i/></div><div className="player__top"><Brand compact/><div><h1>{item.title}</h1><p>{item.kind === 'film'?'Film':'Série'} · {item.year} · {item.duration} · {item.quality}</p>{isLocal?(error?<small className="player-note">{error}</small>:running?<small className="player-note">Lecture native mpv sur le téléviseur.</small>:<small className="player-note">Démarrage du lecteur…</small>):<small className="player-note">Ce titre n’est pas encore dans votre médiathèque locale.</small>}</div></div>
     {panel==='audio' && <div className="track-panel"><h3><Volume2/>Piste audio</h3>{audioTracks.length?audioTracks.map(track=><button className={track.selected?'active':''} key={track.id} onClick={()=>void control('set-audio',track.id)}>{track.label}{track.selected&&<Check/>}</button>):<button disabled>Aucune piste détectée</button>}</div>}
     {panel==='sub' && <div className="track-panel"><h3><Subtitles/>Sous-titres</h3><button className={subtitleTracks.every(track=>!track.selected)?'active':''} onClick={()=>void control('set-subtitle','no')}>Désactivés{subtitleTracks.every(track=>!track.selected)&&<Check/>}</button>{subtitleTracks.map(track=><button className={track.selected?'active':''} key={track.id} onClick={()=>void control('set-subtitle',track.id)}>{track.label}{track.selected&&<Check/>}</button>)}</div>}
     <div className="player__controls"><div className="timeline"><span>{formatTime(position)}</span><i onClick={seek} role="slider" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100} tabIndex={0}><b style={{width:`${pct}%`}}/></i><span>-{formatTime(Math.max(0,duration-position))}</span></div><div className="controls-row"><button onClick={leave}><ArrowLeft/>Retour</button><button onClick={()=>void control('seek-back')} disabled={!running}><RotateCcw/>-10s</button><button className="round" onClick={()=>void control(playing?'pause':'play')} disabled={!running}>{playing?<Pause fill="currentColor"/>:<Play fill="currentColor"/>}</button><button onClick={()=>void control('seek-forward')} disabled={!running}><Timer/>+30s</button><div className="controls-spacer"/>{nextEp&&<button onClick={()=>advance(nextEp.id)}><ChevronRight/>Épisode suivant</button>}<button onClick={finish}><Check/>Terminer</button><button className={panel==='sub'?'selected':''} onClick={()=>setPanel(panel==='sub'?null:'sub')}><Subtitles/>Sous-titres</button><button className={panel==='audio'?'selected':''} onClick={()=>setPanel(panel==='audio'?null:'audio')}><Volume2/>Audio</button></div></div>
-    {nearEnd&&nextEp&&<button className="next-episode-card" onClick={()=>advance(nextEp.id)}><span className="next-episode-label">À suivre</span><strong>{nextEp.title}</strong><span className="next-episode-cta"><Play size={16} fill="currentColor"/> Lire l’épisode suivant</span></button>}
+    {nearEnd&&nextEp&&<button className="next-episode-card" onClick={()=>advance(nextEp.id)}><span className="next-episode-label">{countdown!==null?`Épisode suivant dans ${countdown} s`:'À suivre'}</span><strong>{nextEp.title}</strong><span className="next-episode-cta"><Play size={16} fill="currentColor"/> Lire l’épisode suivant</span></button>}
   </div>;
 }
 
@@ -393,7 +434,7 @@ function RatingPage({profile}:{profile:Profile}) {
   return <div className="rating-page" style={{backgroundImage:`linear-gradient(90deg,rgba(2,8,17,.72),rgba(2,8,17,.58)),url('${posterUrl(item.art)??'/assets/sceneroot-landscape.jpg'}')`}}><Brand compact/><div className="rating-card"><span className="rating-icon"><Film/></span><h1>Vous avez terminé<br/>« {item.title} »</h1><p>Merci d’avoir regardé ! Que pensez-vous de ce {item.kind==='film'?'film':'programme'} ?</p><div className="stars">{[1,2,3,4,5].map(value=><button key={value} onClick={()=>setScore(value)} aria-label={`${value} étoile${value>1?'s':''}`}><Star fill={value<=score?'currentColor':'transparent'}/></button>)}</div><strong>{score} / 5 — {score===5?'Excellent':score===4?'Très bien':score===3?'Bien':score===2?'Moyen':'Décevant'}</strong><div className="rating-tags"><button className={tags.includes('À revoir')?'on':''} onClick={()=>toggle('À revoir')}><RotateCcw/>À revoir</button><button className={tags.includes('Émouvant')?'on':''} onClick={()=>toggle('Émouvant')}><Heart/>Émouvant</button><button className={tags.includes('Surprenant')?'on':''} onClick={()=>toggle('Surprenant')}><Sparkles/>Surprenant</button><button className={tags.includes('Trop long')?'on':''} onClick={()=>toggle('Trop long')}><Hourglass/>Trop long</button></div><div className="rating-actions"><button className="primary" onClick={save} disabled={saving}><Star fill="currentColor"/>{saving?'Enregistrement…':'Noter maintenant'}</button><button className="secondary" onClick={()=>navigate('/')}><Clock3/>Plus tard</button></div><small><Users/>Vos avis nous aident à proposer des recommandations plus personnalisées.</small></div></div>;
 }
 
-type RootsTab='all'|'film'|'serie'|'favorites'|'rated'|'stats';
+type RootsTab='all'|'film'|'serie'|'favorites'|'rated'|'downloads'|'stats';
 type ProfileStats={watched:number;rated:number;averageRating:number|null;films:number;series:number;topGenres:{genre:string;count:number}[];topTags:{tag:string;count:number}[];activity:{month:string;count:number}[];genreTimeline:{genre:string;total:number;months:number[]}[]};
 const monthLabels=['Jan','Fév','Mar','Avr','Mai','Juin','Juil','Août','Sep','Oct','Nov','Déc'];
 function RootsStats({profile}:{profile:Profile}){
@@ -416,11 +457,11 @@ function RootsPage({profile}:{profile:Profile}) {
   const navigate=useNavigate(); const history=useHistory(profile.id); const {favorites,hidden}=usePreferences(profile.id); const [tab,setTab]=useState<RootsTab>('all');
   const visible=history.items.filter(item=>!hidden.has(item.id));
   const favItems=[...favorites].map(favId=>({favId,item:resolveMedia(favId)})).filter(entry=>entry.item.id===entry.favId).map(entry=>entry.item);
-  const filtered=tab==='favorites'?favItems.filter(item=>!hidden.has(item.id)):visible.filter(item=>tab==='all'?true:tab==='rated'?item.rating>0:item.kind===tab);
-  const tabs:[RootsTab,string,React.ReactNode][]=[['all','Déjà vus',<Clock3/>],['film','Films',<Film/>],['serie','Séries',<Tv/>],['favorites','Favoris',<Heart/>],['rated','Notés',<Star/>],['stats','Statistiques',<BarChart3/>]];
+  const filtered=tab==='favorites'?favItems.filter(item=>!hidden.has(item.id)):visible.filter(item=>tab==='all'||tab==='downloads'?true:tab==='rated'?item.rating>0:item.kind===tab);
+  const tabs:[RootsTab,string,React.ReactNode][]=[['all','Déjà vus',<Clock3/>],['film','Films',<Film/>],['serie','Séries',<Tv/>],['favorites','Favoris',<Heart/>],['rated','Notés',<Star/>],['downloads','Téléchargés',<FolderHeart/>],['stats','Statistiques',<BarChart3/>]];
   return <><div className="welcome"><h1>Mes <em>Roots</em></h1><p>Votre historique de visionnage personnel.</p></div>
     <div className="stat-tabs">{tabs.map(([value,label,icon])=><button className={tab===value?'is-on':''} key={value} onClick={()=>setTab(value)}>{icon}{label}</button>)}</div>
-    {tab==='stats'?<RootsStats profile={profile}/>:<>
+    {tab==='stats'?<RootsStats profile={profile}/>:tab==='downloads'?<LibraryView heading={false}/>:<>
     {history.loading&&<div className="library-loading"><i/>Lecture de votre historique…</div>}
     {!history.loading&&!filtered.length&&<div className="library-empty"><Clock3/><h2>Rien pour le moment</h2><p>Vos films et séries terminés ou notés apparaîtront ici.</p></div>}
     {filtered.length>0&&<div className="grid">{filtered.map((m,i)=><MediaCard item={m} active={i===0} key={m.id} onOpen={()=>navigate(`/title/${m.id}`)}/>)}</div>}</>}</> }

@@ -10,3 +10,13 @@ export function posterUrl(src?: string): string | undefined {
   if (!/^https?:\/\//i.test(src)) return src;
   return `/api/image?url=${encodeURIComponent(src)}`;
 }
+
+/** Visuel de remplacement quand aucune affiche n'est disponible. */
+export function placeholderFor(kind: 'film' | 'serie'): string {
+  return kind === 'serie' ? '/assets/placeholder_tvshow.jpg' : '/assets/placeholder_movie.jpg';
+}
+
+/** Affiche d'un média, ou son visuel de remplacement selon le type. */
+export function artworkUrl(art: string | undefined, kind: 'film' | 'serie'): string {
+  return posterUrl(art) ?? placeholderFor(kind);
+}
