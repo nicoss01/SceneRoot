@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Download, Loader2, X } from 'lucide-react';
 import { parseRelease } from '../lib/release';
 import { formatBytes } from '../lib/format';
 import { useEscapeClose } from '../hooks/useEscapeClose';
+import { useModalFocus } from '../hooks/useModalFocus';
 import type { MediaItem } from '../types';
 
 type SourceResult = { source: string; title: string; link?: string; size: number; seeders: number; published?: string };
@@ -26,6 +27,8 @@ export function DownloadPanel({ item, onClose, priority = false, onQueued }: { i
   const query = useMemo(() => item.title, [item.title]);
   const isSeries = item.kind === 'serie';
   useEscapeClose(onClose);
+  const modalRef = useModalFocus<HTMLDivElement>();
+  const firstResultRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     let active = true;
@@ -53,6 +56,10 @@ export function DownloadPanel({ item, onClose, priority = false, onQueued }: { i
     return () => { active = false; };
   }, [query, kind, item.kind, isSeries, season, episode, wholeSeason]);
 
+  // Dès que la liste s'affiche, la télécommande pointe la meilleure version :
+  // aucun déplacement n'est nécessaire pour lancer le téléchargement.
+  useEffect(() => { if (results.length) firstResultRef.current?.focus(); }, [results]);
+
   const launch = async (result: RankedResult) => {
     setLaunchError('');
     if (!result.link || !/^(magnet:\?|https?:\/\/)/i.test(result.link)) { setLaunchError('Cette source ne fournit pas de lien de téléchargement exploitable.'); return; }
@@ -74,7 +81,7 @@ export function DownloadPanel({ item, onClose, priority = false, onQueued }: { i
   };
 
   return <div className="modal-backdrop" onClick={onClose}>
-    <div className="download-panel" onClick={event => event.stopPropagation()}>
+    <div className="download-panel" role="dialog" aria-modal="true" ref={modalRef} onClick={event => event.stopPropagation()}>
       <button className="modal-close" onClick={onClose}><X /></button>
       <h2><Download /> {priority ? 'Télécharger et regarder' : 'Télécharger'} « {item.title} »</h2>
       {priority && <p className="download-legal">Le titre sera téléchargé en priorité. La lecture sera disponible dans la médiathèque une fois le fichier prêt (reprise automatique de la progression).</p>}
@@ -112,7 +119,7 @@ export function DownloadPanel({ item, onClose, priority = false, onQueued }: { i
             <span className="src">{result.source}</span>
           </div>
         </div>
-        <button className="primary" onClick={() => void launch(result)} disabled={launching === result.id || launched === result.id}>
+        <button className="primary" ref={result.id === results[0]?.id ? firstResultRef : undefined} onClick={() => void launch(result)} disabled={launching === result.id || launched === result.id}>
           {launched === result.id ? <><Check /> Envoyé</> : launching === result.id ? <><Loader2 className="spin" /> Envoi…</> : <><Download /> Télécharger</>}
         </button>
       </div>)}</div>}
