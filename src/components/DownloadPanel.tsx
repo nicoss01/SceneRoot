@@ -23,6 +23,17 @@ export function DownloadPanel({ item, onClose, priority = false, onQueued }: { i
   const [episode, setEpisode] = useState(1);
   const [wholeSeason, setWholeSeason] = useState(false);
   const [diagnostics, setDiagnostics] = useState<Array<{ source: string; status: number; count: number; error?: string; mode?: string }>>([]);
+  // Préférences de l'utilisateur : la langue audio oriente la recherche, la
+  // qualité et le HDR le classement. Chargées une fois à l'ouverture.
+  const [prefs, setPrefs] = useState<{ preferredAudio: string; preferredQuality: string; preferredLanguages: string[]; preferHdr: boolean } | null>(null);
+  useEffect(() => {
+    let active = true;
+    fetch('/api/settings')
+      .then(response => response.ok ? response.json() as Promise<{ preferredAudio?: string; preferredQuality?: string; preferredLanguages?: string[]; preferHdr?: boolean }> : null)
+      .then(settings => { if (active && settings) setPrefs({ preferredAudio: settings.preferredAudio ?? 'vf', preferredQuality: settings.preferredQuality ?? '1080p', preferredLanguages: settings.preferredLanguages ?? [], preferHdr: Boolean(settings.preferHdr) }); })
+      .catch(() => { /* réglages indisponibles : valeurs par défaut du serveur */ });
+    return () => { active = false; };
+  }, []);
   const kind = item.kind === 'serie' ? 'tv' : 'movie';
   const query = useMemo(() => item.title, [item.title]);
   const isSeries = item.kind === 'serie';
@@ -36,6 +47,7 @@ export function DownloadPanel({ item, onClose, priority = false, onQueued }: { i
       setLoading(true); setError('');
       try {
         const params = new URLSearchParams({ q: query, kind });
+        if (prefs?.preferredAudio) params.set('audio', prefs.preferredAudio);
         if (isSeries) { params.set('season', String(season)); if (!wholeSeason) params.set('episode', String(episode)); }
         const response = await fetch(`/api/sources/search?${params}`);
         if (!response.ok) throw new Error(`Recherche indisponible (${response.status})`);
@@ -45,7 +57,7 @@ export function DownloadPanel({ item, onClose, priority = false, onQueued }: { i
         const candidates = rows.map((row, index) => ({ ...row, id: `dl-${index}`, ...parseRelease(row.title) }));
         const ranked = await fetch('/api/downloads/rank', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ kind: item.kind, preferredQuality: '1080p', preferredLanguages: ['multi', 'truefrench', 'vff', 'french'], preferHdr: false, candidates }),
+          body: JSON.stringify({ kind: item.kind, preferredQuality: prefs?.preferredQuality ?? '1080p', preferredLanguages: prefs?.preferredLanguages ?? ['multi', 'truefrench', 'vff', 'french'], preferHdr: prefs?.preferHdr ?? false, candidates }),
         });
         const scored = ranked.ok ? await ranked.json() as RankedResult[] : candidates.map(c => ({ ...c, compatibilityScore: 0 }));
         // Six propositions au maximum : au-delà, la liste dépasse l'écran TV et
@@ -54,7 +66,7 @@ export function DownloadPanel({ item, onClose, priority = false, onQueued }: { i
       } catch (cause) { if (active) { setError((cause as Error).message); setLoading(false); } }
     })();
     return () => { active = false; };
-  }, [query, kind, item.kind, isSeries, season, episode, wholeSeason]);
+  }, [query, kind, item.kind, isSeries, season, episode, wholeSeason, prefs]);
 
   // Dès que la liste s'affiche, la télécommande pointe la meilleure version :
   // aucun déplacement n'est nécessaire pour lancer le téléchargement.

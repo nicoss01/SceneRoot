@@ -90,6 +90,8 @@
     <h2>⬇️ Téléchargements</h2>
     <div class="between"><span>Réserve d'espace disque</span><span class="val" id="reserveVal">— Go</span></div>
     <input id="reserve" type="range" min="5" max="500" step="5" />
+    <label>Langue audio préférée</label>
+    <div class="chips" id="audio"></div>
     <label for="quality">Qualité préférée</label>
     <select id="quality"><option value="720p">720p</option><option value="1080p">1080p</option><option value="2160p">4K (2160p)</option></select>
     <div class="between" style="margin-top:12px"><span>Préférer le HDR</span><button id="hdr" class="chip">Non</button></div>
@@ -137,6 +139,20 @@
   }
   function fmtBytes(b){ if(!b) return '0 o'; var u=['o','Ko','Mo','Go','To']; var i=Math.min(u.length-1,Math.floor(Math.log(b)/Math.log(1024))); return (b/Math.pow(1024,i)).toFixed(i>=3?1:0)+' '+u[i]; }
 
+  // Langue audio : ajoutée à la recherche de torrents et au classement.
+  var AUDIO=[['vf','VF / TRUEFRENCH'],['vostfr','VOST FR'],['vost','VOST'],['any','Peu importe']];
+  var audioChoice='vf';
+  function renderAudio(){
+    var host=document.getElementById('audio'); host.innerHTML='';
+    AUDIO.forEach(function(entry){
+      var b=document.createElement('button');
+      b.type='button'; b.className='chip'+(audioChoice===entry[0]?' on':''); b.textContent=entry[1];
+      b.onclick=async function(){ var previous=audioChoice; audioChoice=entry[0]; renderAudio();
+        try{ await api('PUT','/api/settings',{preferredAudio:entry[0]}); toast('Langue audio enregistrée',true); }
+        catch(e){ audioChoice=previous; renderAudio(); toast(e.message,false); } };
+      host.appendChild(b);
+    });
+  }
   var hdrOn=false;
   function renderHdr(){ var el=document.getElementById('hdr'); el.textContent=hdrOn?'Oui':'Non'; el.className='chip'+(hdrOn?' on':''); }
 
@@ -164,6 +180,7 @@
       document.getElementById('reserveVal').textContent=s.minFreeGb+' Go';
       document.getElementById('quality').value=s.preferredQuality;
       hdrOn=!!s.preferHdr; renderHdr();
+      audioChoice=s.preferredAudio||'vf'; renderAudio();
       var host=document.getElementById('sources'); host.innerHTML='';
       (s.envSources||[]).forEach(function(src){ host.insertAdjacentHTML('beforeend','<div class="list-item"><div class="info"><b>'+esc(src.name)+'</b><small>Configurée par l\'environnement</small></div></div>'); });
       (s.sources||[]).forEach(function(src){ var d=document.createElement('div'); d.className='list-item'; d.innerHTML='<div class="info"><b>'+esc(src.name)+'</b><small>'+esc(src.url)+(src.hasKey?' · clé API':'')+'</small></div>'; var b=document.createElement('button'); b.className='danger'; b.textContent='Supprimer'; b.onclick=function(){ delSource(src.id); }; d.appendChild(b); host.appendChild(d); });

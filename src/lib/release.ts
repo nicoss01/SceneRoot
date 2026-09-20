@@ -11,6 +11,8 @@ export function parseRelease(title: string): ParsedRelease {
   if (/\bvff\b/.test(t)) languages.push('vff');
   if (/french|\bfr\b|\bvf\b|\bvfi\b/.test(t)) languages.push('french');
   if (/vostfr/.test(t)) languages.push('vostfr');
+  // « VOST » seul : sous-titres non français, à distinguer de VOSTFR.
+  else if (/\bvost\b|\bsubbed\b/.test(t)) languages.push('vost');
   if (/english|\beng\b|\ben\b/.test(t)) languages.push('english');
   if (!languages.length) languages.push('inconnu');
   return { quality, hdr, codec, languages: [...new Set(languages)] };

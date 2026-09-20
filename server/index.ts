@@ -26,7 +26,7 @@ type Rating = { profileId: string; mediaId: string; score: number; tags: string[
 type ProfileRecord = { id:string; name:string; ageLimit:number; avatar:string; accent:string; pinHash?:string; createdAt:string };
 type MediaMetadata = { provider:'tmdb'|'tvmaze'|'wikipedia'; providerId:number|string; title:string; originalTitle?:string; overview?:string; poster?:string; backdrop?:string; genres?:string[]; releaseDate?:string; ageRating?:string; runtime?:number; sourceUrl?:string; informationSource?:string };
 type PlaybackEntry = { position:number; duration:number; updatedAt:string };
-type Settings = { minFreeGb?:number; preferredQuality?:string; preferredLanguages?:string[]; preferHdr?:boolean; torznabSources?:TorznabSource[]; setupComplete?:boolean; adminToken?:string; tmdbApiKey?:string; catalogSyncEnabled?:boolean };
+type Settings = { minFreeGb?:number; preferredQuality?:string; preferredAudio?:AudioPreference; preferredLanguages?:string[]; preferHdr?:boolean; torznabSources?:TorznabSource[]; setupComplete?:boolean; adminToken?:string; tmdbApiKey?:string; catalogSyncEnabled?:boolean };
 type GuestSession = { id:string; ageLimit:number; createdAt:string; expiresAt:number|null; ephemeral:boolean };
 type MediaPref = { profileId:string; mediaId:string; at:string };
 type Db = { profiles: ProfileRecord[]; library: LibraryItem[]; ratings: Rating[]; playback: Record<string, PlaybackEntry|number>; settings: Settings; guests: GuestSession[]; favorites: MediaPref[]; hidden: MediaPref[] };
@@ -333,7 +333,120 @@ async function enrichCatalogSeason(parent:CatalogRow,seasonNumber:number){
   }
   try{const lookup=await fetch(`https://api.tvmaze.com/lookup/shows?imdb=${encodeURIComponent(parent.imdbId)}`,{headers:{Accept:'application/json','User-Agent':'SceneRoot/0.1'},signal:AbortSignal.timeout(12_000)});if(!lookup.ok)return;const show=await lookup.json() as {id:number};catalogStore.upsertLocalized({imdbId:parent.imdbId,tvmazeId:show.id,source:'tvmaze'});const result=await cachedJson<Array<{season:number;number:number;name?:string;summary?:string;image?:{medium?:string;original?:string}}>>(`catalog-episodes-tvmaze-${show.id}`,`https://api.tvmaze.com/shows/${show.id}/episodes`,30*24*60*60*1000);for(const remote of result.data.filter(value=>value.season===seasonNumber)){const local=localSeason.episodes.find(value=>value.episode===remote.number);if(local)catalogStore.upsertLocalized({imdbId:local.imdbId,titleFr:remote.name,overviewFr:stripHtml(remote.summary),poster:remote.image?.original??remote.image?.medium,source:'tvmaze'})}}catch(error){app.log.debug({error,parent:parent.imdbId,seasonNumber},'TVmaze season enrichment failed')}
 }
-app.get<{Params:{id:string}}>('/api/catalog/:id/seasons',async(request,reply)=>{const match=/^imdb-serie-(tt\d+)$/.exec(request.params.id);if(!match)return reply.code(404).send({error:'Série du catalogue local introuvable'});const parent=catalogStore.get(match[1]);if(!parent||parent.kind!=='serie')return reply.code(404).send({error:'Série introuvable'});let seasons=catalogStore.seasons(parent.imdbId);await Promise.allSettled(seasons.slice(0,3).filter(season=>season.episodes.some(episode=>!episode.titleFr)).map(season=>enrichCatalogSeason(parent,season.season)));seasons=catalogStore.seasons(parent.imdbId);return{source:tmdbApiKey()?'IMDb + TMDB (fr-FR)':'IMDb + TVmaze',seasons:seasons.map(season=>({season:season.season,episodes:season.episodes.map(episode=>({id:`imdb-episode-${episode.imdbId}`,season:season.season,episode:episode.episode,title:episode.titleFr||episode.title,overview:episode.overviewFr,still:episode.still,versions:0,progress:0,position:0,playable:false}))}))}});
+type RemoteEpisode={id:string;season:number;episode:number;title:string;overview?:string;still?:string;versions:number;progress:number;position:number;playable:boolean};
+type RemoteSeasons={source:string;seasons:Array<{season:number;episodes:RemoteEpisode[]}>};
+/** Au plus huit saisons chargées en parallèle : au-delà, TMDB et le Pi saturent. */
+const SEASON_BATCH=8;
+/** Retrouve l'identifiant TMDB d'une série à partir de ce que l'on connaît. */
+async function tmdbSeriesId(key:string,options:{tmdbId?:number;imdbId?:string;title?:string;year?:number}):Promise<number|undefined>{
+  if(options.tmdbId)return options.tmdbId;
+  if(options.imdbId){
+    const url=`https://api.themoviedb.org/3/find/${options.imdbId}?api_key=${encodeURIComponent(key)}&external_source=imdb_id&language=fr-FR`;
+    try{const found=await cachedJson<{tv_results?:Array<{id:number}>}>(`tmdb-find-${options.imdbId}`,url,30*24*60*60*1000);const hit=found.data.tv_results?.[0];if(hit?.id)return hit.id}catch{/* on tentera par le titre */}
+  }
+  if(options.title){
+    const url=new URL('https://api.themoviedb.org/3/search/tv');url.searchParams.set('api_key',key);url.searchParams.set('language','fr-FR');url.searchParams.set('query',options.title);
+    if(options.year)url.searchParams.set('first_air_date_year',String(options.year));
+    try{const found=await cachedJson<{results?:Array<{id:number}>}>(`tmdb-search-tv-${slug(`${options.title}-${options.year??''}`)}`,url.toString(),7*24*60*60*1000);return found.data.results?.[0]?.id}catch{/* série inconnue de TMDB */}
+  }
+  return undefined;
+}
+/**
+ * Saisons et épisodes d'une série qui n'est pas dans la médiathèque : TMDB en
+ * français quand une clé est configurée, TVmaze en secours. Les réponses sont
+ * mises en cache, seule la première consultation paie les appels réseau.
+ */
+async function remoteSeasons(options:{tmdbId?:number;imdbId?:string;title?:string;year?:number}):Promise<RemoteSeasons>{
+  const key=tmdbApiKey();
+  if(key){
+    const tmdbId=await tmdbSeriesId(key,options);
+    if(tmdbId){
+      try{
+        const detail=await cachedJson<{seasons?:Array<{season_number:number;episode_count?:number}>}>(`tmdb-tv-${tmdbId}`,`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${encodeURIComponent(key)}&language=fr-FR`,7*24*60*60*1000);
+        const numbers=(detail.data.seasons??[]).map(season=>season.season_number).filter(number=>number>0).slice(0,SEASON_BATCH*3);
+        const seasons:RemoteSeasons['seasons']=[];
+        for(let index=0;index<numbers.length;index+=SEASON_BATCH){
+          const slice=numbers.slice(index,index+SEASON_BATCH);
+          const loaded=await Promise.all(slice.map(async number=>{
+            try{
+              const season=await cachedJson<{episodes?:Array<{episode_number:number;name?:string;overview?:string;still_path?:string}>}>(`catalog-episodes-tmdb-${tmdbId}-${number}`,`https://api.themoviedb.org/3/tv/${tmdbId}/season/${number}?api_key=${encodeURIComponent(key)}&language=fr-FR`,30*24*60*60*1000);
+              const episodes=(season.data.episodes??[]).map(episode=>({
+                id:`tmdb-episode-${tmdbId}-${number}-${episode.episode_number}`,
+                season:number,episode:episode.episode_number,
+                title:episode.name||`Épisode ${episode.episode_number}`,
+                overview:episode.overview||undefined,
+                still:episode.still_path?`https://image.tmdb.org/t/p/w500${episode.still_path}`:undefined,
+                versions:0,progress:0,position:0,playable:false,
+              }));
+              return episodes.length?{season:number,episodes}:null;
+            }catch{return null}
+          }));
+          for(const season of loaded)if(season)seasons.push(season);
+        }
+        if(seasons.length)return{source:'TMDB (fr-FR)',seasons};
+      }catch{/* on bascule sur TVmaze */}
+    }
+  }
+  // TVmaze : une seule requête donne tous les épisodes, résumés en anglais.
+  try{
+    let showId:number|undefined;
+    if(options.imdbId){
+      const lookup=await fetch(`https://api.tvmaze.com/lookup/shows?imdb=${encodeURIComponent(options.imdbId)}`,{headers:{Accept:'application/json','User-Agent':'SceneRoot/0.1'},signal:AbortSignal.timeout(12_000)});
+      if(lookup.ok)showId=(await lookup.json() as {id?:number}).id;
+    }
+    if(!showId&&options.title){
+      const search=await fetch(`https://api.tvmaze.com/singlesearch/shows?q=${encodeURIComponent(options.title)}`,{headers:{Accept:'application/json','User-Agent':'SceneRoot/0.1'},signal:AbortSignal.timeout(12_000)});
+      if(search.ok)showId=(await search.json() as {id?:number}).id;
+    }
+    if(!showId)return{source:'Aucune source d’épisodes',seasons:[]};
+    const result=await cachedJson<Array<{season:number;number:number;name?:string;summary?:string;image?:{medium?:string;original?:string}}>>(`tvmaze-episodes-${showId}`,`https://api.tvmaze.com/shows/${showId}/episodes`,7*24*60*60*1000);
+    const grouped=new Map<number,RemoteEpisode[]>();
+    for(const episode of result.data){
+      if(!episode.season||!episode.number)continue;
+      const list=grouped.get(episode.season)??[];
+      list.push({
+        id:`tvmaze-episode-${showId}-${episode.season}-${episode.number}`,
+        season:episode.season,episode:episode.number,
+        title:episode.name||`Épisode ${episode.number}`,
+        overview:episode.summary?episode.summary.replace(/<[^>]+>/g,'').trim():undefined,
+        still:episode.image?.medium??episode.image?.original,
+        versions:0,progress:0,position:0,playable:false,
+      });
+      grouped.set(episode.season,list);
+    }
+    const seasons=[...grouped.entries()].sort((a,b)=>a[0]-b[0]).map(([season,episodes])=>({season,episodes}));
+    return{source:seasons.length?'TVmaze':'Aucune source d’épisodes',seasons};
+  }catch{return{source:'Aucune source d’épisodes',seasons:[]}}
+}
+/**
+ * Saisons et épisodes d'une série du catalogue. Le catalogue IMDb local ne
+ * contient les épisodes qu'après un import complet, et une série TMDB n'y
+ * figure pas du tout : on complète alors depuis TMDB ou TVmaze, le titre et
+ * l'année étant fournis par la fiche.
+ */
+app.get<{Params:{id:string};Querystring:{title?:string;year?:string}}>('/api/catalog/:id/seasons',async(request,reply)=>{
+  const title=request.query.title?.trim()||undefined;
+  const year=Number(request.query.year)||undefined;
+  const imdbMatch=/^imdb-serie-(tt\d+)$/.exec(request.params.id);
+  if(imdbMatch){
+    const parent=catalogStore.get(imdbMatch[1]);
+    if(parent&&parent.kind==='serie'){
+      let seasons=catalogStore.seasons(parent.imdbId);
+      if(seasons.length){
+        await Promise.allSettled(seasons.slice(0,3).filter(season=>season.episodes.some(episode=>!episode.titleFr)).map(season=>enrichCatalogSeason(parent,season.season)));
+        seasons=catalogStore.seasons(parent.imdbId);
+        return{source:tmdbApiKey()?'IMDb + TMDB (fr-FR)':'IMDb + TVmaze',seasons:seasons.map(season=>({season:season.season,episodes:season.episodes.map(episode=>({id:`imdb-episode-${episode.imdbId}`,season:season.season,episode:episode.episode,title:episode.titleFr||episode.title,overview:episode.overviewFr,still:episode.still,versions:0,progress:0,position:0,playable:false}))}))};
+      }
+      // Import interrompu avant les épisodes : on va les chercher en ligne.
+      return remoteSeasons({imdbId:parent.imdbId,tmdbId:parent.tmdbId,title:title??parent.titleFr??parent.primaryTitle,year:year??parent.startYear});
+    }
+    return remoteSeasons({imdbId:imdbMatch[1],title,year});
+  }
+  const tmdbMatch=/^tmdb-serie-(\d+)$/.exec(request.params.id);
+  if(tmdbMatch)return remoteSeasons({tmdbId:Number(tmdbMatch[1]),title,year});
+  if(!title)return reply.code(404).send({error:'Série introuvable : titre manquant'});
+  return remoteSeasons({title,year});
+});
 
 /**
  * Cache local des affiches. Les jaquettes viennent de quelques hébergeurs
@@ -376,8 +489,20 @@ function cacheStats(){try{const files=readdirSync(cacheDir);let bytes=0;for(cons
 app.get('/api/cache',async()=>cacheStats());
 app.delete('/api/cache',async()=>{let removed=0;try{for(const file of readdirSync(cacheDir)){try{rmSync(join(cacheDir,file));removed++}catch{/* ignore */}}}catch{/* dossier absent */}return{ok:true,removed}});
 app.get('/api/storage',async()=>mediaRoots.filter(existsSync).map(root=>{const s=statfsSync(root);return{root,total:s.blocks*s.bsize,free:s.bfree*s.bsize,available:s.bavail*s.bsize,libraryBytes:loadDb().library.filter(x=>isWithin(root,x.path)).reduce((n,x)=>n+x.size,0)}}));
-app.get('/api/settings',async()=>{const s=loadDb().settings;const key=tmdbApiKey();return{minFreeGb:s.minFreeGb??Number(process.env.SCENEROOT_MIN_FREE_GB??5),preferredQuality:s.preferredQuality??'1080p',preferredLanguages:s.preferredLanguages??['multi','truefrench','vff','french'],preferHdr:Boolean(s.preferHdr),setupComplete:Boolean(s.setupComplete),catalogSyncEnabled:s.catalogSyncEnabled??false,tmdb:{configured:Boolean(key),source:tmdbConfiguredByEnvironment?'environment':key?'settings':'none',maskedKey:key?maskSecret(key):undefined},envSources:envSources().map(source=>({id:source.id,name:source.name})),sources:(s.torznabSources??[]).map(maskSource)}});
-app.put<{Body:Partial<Settings>&{tmdbApiKey?:string|null}}>('/api/settings',{schema:{body:{type:'object',properties:{minFreeGb:{type:'number',minimum:0,maximum:100000},preferredQuality:{type:'string'},preferredLanguages:{type:'array',items:{type:'string'}},preferHdr:{type:'boolean'},setupComplete:{type:'boolean'},catalogSyncEnabled:{type:'boolean'},tmdbApiKey:{type:['string','null'],maxLength:512}}}}},async(request,reply)=>{const db=loadDb();if(request.body.minFreeGb!==undefined)db.settings.minFreeGb=Number(request.body.minFreeGb);if(request.body.preferredQuality!==undefined)db.settings.preferredQuality=String(request.body.preferredQuality);if(Array.isArray(request.body.preferredLanguages))db.settings.preferredLanguages=request.body.preferredLanguages.map(String);if(request.body.preferHdr!==undefined)db.settings.preferHdr=Boolean(request.body.preferHdr);if(request.body.setupComplete!==undefined)db.settings.setupComplete=Boolean(request.body.setupComplete);if(request.body.catalogSyncEnabled!==undefined)db.settings.catalogSyncEnabled=Boolean(request.body.catalogSyncEnabled);if(request.body.tmdbApiKey!==undefined){if(tmdbConfiguredByEnvironment)return reply.code(409).send({error:'La clé TMDB est imposée par la variable d’environnement TMDB_API_KEY.'});const key=String(request.body.tmdbApiKey??'').trim();if(key){try{const response=await fetch(`https://api.themoviedb.org/3/configuration?api_key=${encodeURIComponent(key)}`,{headers:{Accept:'application/json'},signal:AbortSignal.timeout(12_000)});if(!response.ok)return reply.code(400).send({error:'Clé API TMDB v3 invalide.'})}catch{return reply.code(502).send({error:'TMDB est injoignable, la clé n’a pas été enregistrée.'})}db.settings.tmdbApiKey=key;process.env.TMDB_API_KEY=key}else{delete db.settings.tmdbApiKey;delete process.env.TMDB_API_KEY}}saveDb(db);if(request.body.catalogSyncEnabled&&!catalogStore.count())void startImdbSync();return{ok:true}});
+/**
+ * Préférence de langue audio. Elle sert à deux choses : orienter la recherche
+ * sur les traqueurs, et classer les versions trouvées.
+ */
+type AudioPreference='vf'|'vostfr'|'vost'|'any';
+const audioPreferences:Record<AudioPreference,{languages:string[];term?:string;label:string}>={
+  vf:{languages:['multi','truefrench','vff','french'],term:'MULTI',label:'VF / TRUEFRENCH'},
+  vostfr:{languages:['vostfr'],term:'VOSTFR',label:'VOST FR'},
+  vost:{languages:['vost','vostfr'],term:'VOST',label:'VOST'},
+  any:{languages:[],label:'Peu importe'},
+};
+function audioPreference(value?:string):AudioPreference{return value==='vostfr'||value==='vost'||value==='any'?value:'vf'}
+app.get('/api/settings',async()=>{const s=loadDb().settings;const key=tmdbApiKey();return{minFreeGb:s.minFreeGb??Number(process.env.SCENEROOT_MIN_FREE_GB??5),preferredQuality:s.preferredQuality??'1080p',preferredAudio:audioPreference(s.preferredAudio),preferredLanguages:s.preferredLanguages??audioPreferences[audioPreference(s.preferredAudio)].languages,preferHdr:Boolean(s.preferHdr),setupComplete:Boolean(s.setupComplete),catalogSyncEnabled:s.catalogSyncEnabled??false,tmdb:{configured:Boolean(key),source:tmdbConfiguredByEnvironment?'environment':key?'settings':'none',maskedKey:key?maskSecret(key):undefined},envSources:envSources().map(source=>({id:source.id,name:source.name})),sources:(s.torznabSources??[]).map(maskSource)}});
+app.put<{Body:Partial<Settings>&{tmdbApiKey?:string|null}}>('/api/settings',{schema:{body:{type:'object',properties:{minFreeGb:{type:'number',minimum:0,maximum:100000},preferredQuality:{type:'string'},preferredAudio:{type:'string',enum:['vf','vostfr','vost','any']},preferredLanguages:{type:'array',items:{type:'string'}},preferHdr:{type:'boolean'},setupComplete:{type:'boolean'},catalogSyncEnabled:{type:'boolean'},tmdbApiKey:{type:['string','null'],maxLength:512}}}}},async(request,reply)=>{const db=loadDb();if(request.body.minFreeGb!==undefined)db.settings.minFreeGb=Number(request.body.minFreeGb);if(request.body.preferredQuality!==undefined)db.settings.preferredQuality=String(request.body.preferredQuality);if(request.body.preferredAudio!==undefined){const choice=audioPreference(request.body.preferredAudio);db.settings.preferredAudio=choice;/* les langues suivent la préférence, sauf réglage explicite ensuite */db.settings.preferredLanguages=audioPreferences[choice].languages}if(Array.isArray(request.body.preferredLanguages))db.settings.preferredLanguages=request.body.preferredLanguages.map(String);if(request.body.preferHdr!==undefined)db.settings.preferHdr=Boolean(request.body.preferHdr);if(request.body.setupComplete!==undefined)db.settings.setupComplete=Boolean(request.body.setupComplete);if(request.body.catalogSyncEnabled!==undefined)db.settings.catalogSyncEnabled=Boolean(request.body.catalogSyncEnabled);if(request.body.tmdbApiKey!==undefined){if(tmdbConfiguredByEnvironment)return reply.code(409).send({error:'La clé TMDB est imposée par la variable d’environnement TMDB_API_KEY.'});const key=String(request.body.tmdbApiKey??'').trim();if(key){try{const response=await fetch(`https://api.themoviedb.org/3/configuration?api_key=${encodeURIComponent(key)}`,{headers:{Accept:'application/json'},signal:AbortSignal.timeout(12_000)});if(!response.ok)return reply.code(400).send({error:'Clé API TMDB v3 invalide.'})}catch{return reply.code(502).send({error:'TMDB est injoignable, la clé n’a pas été enregistrée.'})}db.settings.tmdbApiKey=key;process.env.TMDB_API_KEY=key}else{delete db.settings.tmdbApiKey;delete process.env.TMDB_API_KEY}}saveDb(db);if(request.body.catalogSyncEnabled&&!catalogStore.count())void startImdbSync();return{ok:true}});
 app.post<{Body:Partial<TorznabSource>}>('/api/sources',{schema:{body:{type:'object',required:['name','url'],properties:{name:{type:'string'},url:{type:'string'},apiKey:{type:'string'},categories:{type:'string'}}}}},async(request,reply)=>{const source=sanitizeSource(request.body,randomUUID());if(!source)return reply.code(400).send({error:'Source invalide : nom et URL http(s) requis'});const db=loadDb();db.settings.torznabSources=[...(db.settings.torznabSources??[]),source];saveDb(db);return reply.code(201).send(maskSource(source))});
 app.delete<{Params:{id:string}}>('/api/sources/:id',async request=>{const db=loadDb();const list=db.settings.torznabSources??[];const before=list.length;db.settings.torznabSources=list.filter(source=>source.id!==request.params.id);saveDb(db);return{ok:true,removed:before-(db.settings.torznabSources?.length??0)}});
 app.get<{Params:{id:string}}>('/api/media/:id', async (request, reply) => {
@@ -493,10 +618,13 @@ type TorznabResult={source:string;title?:string;link?:string;size:number;seeders
 // Délai par requête : assez long pour un tracker lent, assez court pour ne pas
 // bloquer l'écran de recherche quand une source ne répond plus.
 const torznabTimeout=Math.max(3000,Number(process.env.SCENEROOT_TORZNAB_TIMEOUT_MS)||12000);
-app.get<{Querystring:{q:string;kind?:'movie'|'tv';season?:string;episode?:string}}>('/api/sources/search',async(request,reply)=>{
+app.get<{Querystring:{q:string;kind?:'movie'|'tv';season?:string;episode?:string;audio?:string}}>('/api/sources/search',async(request,reply)=>{
   if(!request.query.q)return reply.code(400).send({error:'Recherche manquante'});
   const q=stripYear(request.query.q);
   const type=request.query.kind==='tv'?'tvsearch':request.query.kind==='movie'?'movie':'search';
+  // La préférence de langue affine la requête ; la cascade repasse ensuite sans
+  // elle, pour ne jamais rester sans résultat faute du bon mot-clé.
+  const audio=audioPreferences[audioPreference(request.query.audio??loadDb().settings.preferredAudio)];
   const searchOne=async(source:Source)=>{
     const endpoint=normalizeTorznabUrl(source.url);
     const once=async(params:Record<string,string|undefined>)=>{const url=new URL(endpoint);url.searchParams.set('apikey',source.apiKey);for(const[key,value]of Object.entries(params))if(value)url.searchParams.set(key,value);try{const res=await fetch(url,{signal:AbortSignal.timeout(torznabTimeout),headers:{'User-Agent':'SceneRoot/0.1 (+https://github.com/sceneroot)'}});const xml=await res.text();return{status:res.status,ok:res.ok,blocks:xml.match(/<item(?:\s[^>]*)?>[\s\S]*?<\/item>/gi)??[],error:res.ok?torznabError(xml):`HTTP ${res.status}`}}catch(error){return{status:0,ok:false,blocks:[] as string[],error:(error as Error).message}}};
@@ -504,6 +632,7 @@ app.get<{Querystring:{q:string;kind?:'movie'|'tv';season?:string;episode?:string
     // catégories, ni season/ep : on dégrade jusqu'à la requête la plus simple,
     // celle que l'on peut reproduire à la main dans un navigateur.
     const attempts:Array<{mode:string;params:Record<string,string|undefined>}>=[
+      ...(audio.term?[{mode:`t=${type} ${audio.term}`,params:{t:type,q:`${q} ${audio.term}`,cat:source.categories,season:request.query.season,ep:request.query.episode}}]:[]),
       {mode:`t=${type}`,params:{t:type,q,cat:source.categories,season:request.query.season,ep:request.query.episode}},
       {mode:`t=${type} sans catégorie`,params:{t:type,q,season:request.query.season,ep:request.query.episode}},
       {mode:'t=search + épisode dans le titre',params:{t:'search',q:episodeQuery(q,request.query.season,request.query.episode)}},

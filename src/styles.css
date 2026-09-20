@@ -649,3 +649,8 @@ body.hide-cursor, body.hide-cursor * { cursor: none !important; }
 .torrent-magnet input:focus { outline: none; border-color: var(--cyan); }
 .torrent-done { display: flex; align-items: center; gap: 9px; margin: 12px 0; color: #39e58e; }
 .torrent-actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 18px 0 10px; }
+
+.audio-choice { margin: 16px 0; }
+.audio-choice strong { display: block; margin-bottom: 8px; font-size: 15px; font-weight: 600; }
+.audio-choice > div { display: flex; flex-wrap: wrap; gap: 8px; }
+.audio-choice small { display: block; margin-top: 8px; color: var(--muted); line-height: 1.45; }

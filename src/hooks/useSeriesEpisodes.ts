@@ -6,13 +6,19 @@ export type EpisodeMeta = { id: string; season: number; episode: number; title: 
 export type SeasonMeta = { season: number; episodes: EpisodeMeta[] };
 export type SeriesEpisodes = { seasons: SeasonMeta[]; source?: string };
 
-export function useSeriesEpisodes(id: string | undefined, profileId: string, enabled: boolean, seriesTitle: string, art?: string) {
+export function useSeriesEpisodes(id: string | undefined, profileId: string, enabled: boolean, seriesTitle: string, art?: string, local = false, year?: number) {
   const [data, setData] = useState<SeriesEpisodes>({ seasons: [] });
   const [loading, setLoading] = useState(enabled);
   useEffect(() => {
     if (!enabled || !id) { setData({ seasons: [] }); setLoading(false); return; }
     let active = true; setLoading(true);
-    const endpoint = id.startsWith('imdb-serie-') ? `/api/catalog/${encodeURIComponent(id)}/seasons` : `/api/library/group/${encodeURIComponent(id)}/episodes?profileId=${encodeURIComponent(profileId)}`;
+    // Une série de la médiathèque a ses propres fichiers ; sinon on passe par
+    // le catalogue, qui sait compléter depuis TMDB ou TVmaze avec le titre.
+    const context = new URLSearchParams({ title: seriesTitle });
+    if (year) context.set('year', String(year));
+    const endpoint = local
+      ? `/api/library/group/${encodeURIComponent(id)}/episodes?profileId=${encodeURIComponent(profileId)}`
+      : `/api/catalog/${encodeURIComponent(id)}/seasons?${context}`;
     fetch(endpoint)
       .then(response => response.ok ? response.json() as Promise<SeriesEpisodes> : null)
       .then(result => {
@@ -30,6 +36,6 @@ export function useSeriesEpisodes(id: string | undefined, profileId: string, ena
       })
       .catch(() => { if (active) { setData({ seasons: [] }); setLoading(false); } });
     return () => { active = false; };
-  }, [id, profileId, enabled, seriesTitle, art]);
+  }, [id, profileId, enabled, seriesTitle, art, local, year]);
   return { ...data, loading };
 }
