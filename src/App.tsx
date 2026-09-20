@@ -172,6 +172,8 @@ function TonightPage({availableProfiles,profile}:{availableProfiles:Profile[];pr
   const navigate=useNavigate();
   const library=useLibrary(); const {hidden}=usePreferences(profile.id);
   const [selected,setSelected]=useState(()=>availableProfiles.slice(0,3).map(profile=>profile.id));
+  // Un profil supprimé ailleurs ne doit plus peser dans le compromis.
+  useEffect(()=>{setSelected(current=>{const kept=current.filter(id=>availableProfiles.some(profile=>profile.id===id));return kept.length===current.length?current:kept})},[availableProfiles]);
   const [kind,setKind]=useState<'film'|'serie'|'any'>('any');
   const [duration,setDuration]=useState<'short'|'medium'|'any'>('any');
   const [mood,setMood]=useState<Mood>('Découverte');
@@ -506,6 +508,25 @@ function App() {
   const refetchProfiles=useCallback(()=>fetch('/api/profiles').then(response=>response.ok?response.json():[]).then((items:Profile[])=>setSavedProfiles(items)).catch(()=>setSavedProfiles([])).finally(()=>setProfilesLoaded(true)),[]);
   useEffect(()=>{const timer=setTimeout(()=>setBooting(false),1450);return()=>clearTimeout(timer)},[]);
   useEffect(()=>{void refetchProfiles()},[refetchProfiles]);
+  // Les profils se modifient aussi depuis le panneau mobile : on les relit
+  // régulièrement et au retour sur l'écran, sinon la TV garde l'ancienne liste.
+  useEffect(()=>{
+    const timer=setInterval(()=>void refetchProfiles(),20_000);
+    const onWake=()=>{if(!document.hidden)void refetchProfiles()};
+    document.addEventListener('visibilitychange',onWake);
+    window.addEventListener('focus',onWake);
+    return()=>{clearInterval(timer);document.removeEventListener('visibilitychange',onWake);window.removeEventListener('focus',onWake)};
+  },[refetchProfiles]);
+  // Le profil actif est mémorisé localement : on le réaligne sur le serveur
+  // (nom, avatar, limite d'âge) et on le libère s'il a été supprimé.
+  useEffect(()=>{
+    if(!profilesLoaded||!profile)return;
+    const fresh=savedProfiles.find(entry=>entry.id===profile.id);
+    if(!fresh){localStorage.removeItem('sceneroot-profile');setProfile(null);return}
+    if(JSON.stringify(fresh)===JSON.stringify(profile))return;
+    localStorage.setItem('sceneroot-profile',JSON.stringify(fresh));
+    setProfile(fresh);
+  },[savedProfiles,profilesLoaded,profile]);
   useEffect(()=>{fetch('/api/settings').then(response=>response.ok?response.json():null).then((data:{setupComplete?:boolean}|null)=>setSetupComplete(Boolean(data?.setupComplete))).catch(()=>setSetupComplete(false))},[]);
   // Zoom d'interface pour la TV : le kiosque ouvre l'app avec ?tv=<facteur>, qu'on
   // mémorise pour que le réglage survive à la navigation (sans toucher au navigateur).
