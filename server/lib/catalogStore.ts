@@ -69,6 +69,8 @@ export type CatalogSyncState = {
   status: 'idle' | 'running' | 'complete' | 'error';
   phase: string;
   startedAt?: string;
+  /** Dernier signe de vie : distingue un import qui avance d'un import figé. */
+  updatedAt?: string;
   completedAt?: string;
   processed: number;
   total?: number;
@@ -159,10 +161,11 @@ export class CatalogStore {
       CREATE INDEX IF NOT EXISTS idx_catalog_wikidata ON catalog_localized(wikidata_id);
       CREATE TABLE IF NOT EXISTS catalog_sync(
         source TEXT PRIMARY KEY, status TEXT NOT NULL, phase TEXT NOT NULL, started_at TEXT, completed_at TEXT,
-        processed INTEGER NOT NULL DEFAULT 0, total INTEGER, error TEXT
+        processed INTEGER NOT NULL DEFAULT 0, total INTEGER, error TEXT, updated_at TEXT
       );
     `);
     try { this.db.exec('ALTER TABLE catalog_localized ADD COLUMN wikidata_checked_at TEXT'); } catch { /* migration déjà appliquée */ }
+    try { this.db.exec('ALTER TABLE catalog_sync ADD COLUMN updated_at TEXT'); } catch { /* migration déjà appliquée */ }
     // « browsable » résume en une égalité les deux conditions de tout parcours
     // du catalogue (un film ou une série, tout public). Sans elle, la clause
     // kind IN (...) obligeait SQLite à balayer la table puis à trier en
@@ -504,16 +507,17 @@ export class CatalogStore {
 
   setSync(state: CatalogSyncState): void {
     if (!this.db) return;
-    this.db.prepare(`INSERT INTO catalog_sync(source,status,phase,started_at,completed_at,processed,total,error) VALUES(?,?,?,?,?,?,?,?)
-      ON CONFLICT(source) DO UPDATE SET status=excluded.status,phase=excluded.phase,started_at=excluded.started_at,completed_at=excluded.completed_at,processed=excluded.processed,total=excluded.total,error=excluded.error`)
-      .run(state.source,state.status,state.phase,state.startedAt??null,state.completedAt??null,state.processed,state.total??null,state.error??null);
+    this.db.prepare(`INSERT INTO catalog_sync(source,status,phase,started_at,completed_at,processed,total,error,updated_at) VALUES(?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(source) DO UPDATE SET status=excluded.status,phase=excluded.phase,started_at=excluded.started_at,completed_at=excluded.completed_at,processed=excluded.processed,total=excluded.total,error=excluded.error,updated_at=excluded.updated_at`)
+      .run(state.source,state.status,state.phase,state.startedAt??null,state.completedAt??null,state.processed,state.total??null,state.error??null,state.updatedAt??new Date().toISOString());
   }
 
   syncStates(): CatalogSyncState[] {
     if (!this.db) return [];
     return (this.db.prepare('SELECT * FROM catalog_sync ORDER BY source').all() as Array<Record<string, unknown>>).map(row => ({
       source:String(row.source), status:String(row.status) as CatalogSyncState['status'], phase:String(row.phase), startedAt:row.started_at?String(row.started_at):undefined,
-      completedAt:row.completed_at?String(row.completed_at):undefined, processed:Number(row.processed??0), total:row.total==null?undefined:Number(row.total), error:row.error?String(row.error):undefined,
+      completedAt:row.completed_at?String(row.completed_at):undefined, updatedAt:row.updated_at?String(row.updated_at):undefined,
+      processed:Number(row.processed??0), total:row.total==null?undefined:Number(row.total), error:row.error?String(row.error):undefined,
     }));
   }
 

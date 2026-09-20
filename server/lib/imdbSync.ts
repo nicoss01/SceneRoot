@@ -5,6 +5,8 @@ import type { CatalogEpisodeInput, CatalogRatingInput, CatalogStore, CatalogTitl
 
 const BASE = 'https://datasets.imdbws.com';
 const BATCH = 5_000;
+/** Intervalle minimal entre deux points d'avancement. */
+const REPORT_EVERY_MS = 2_000;
 const TITLE_TYPES = new Map<string, CatalogTitleInput['kind']>([
   ['movie', 'film'], ['tvMovie', 'film'], ['tvSeries', 'serie'], ['tvMiniSeries', 'serie'], ['tvEpisode', 'episode'],
 ]);
@@ -47,10 +49,19 @@ export async function syncImdbCatalog(store: CatalogStore, options: {
   const startedAt = new Date().toISOString();
   const token = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   let processed = 0;
+  let lastReport = 0;
   const report = (phase: string) => {
+    lastReport = Date.now();
     const progress = { phase, processed, startedAt };
-    store.setSync({ source: 'imdb', status: 'running', ...progress }); options.onProgress?.(progress);
+    store.setSync({ source: 'imdb', status: 'running', ...progress, updatedAt: new Date().toISOString() });
+    options.onProgress?.(progress);
   };
+  /**
+   * Avancement rapporté au rythme du temps plutôt que des lignes : une étape
+   * qui démarre montre un compteur qui bouge dès les premières secondes, et le
+   * suivi reste léger sur des millions de lignes.
+   */
+  const tick = (phase: string) => { if (Date.now() - lastReport >= REPORT_EVERY_MS) report(phase) };
   // Vérifié à chaque lot : l'arrêt est effectif en une fraction de seconde.
   const stopIfCancelled = () => { if (options.signal?.aborted) throw new SyncCancelled() };
   report('Téléchargement des titres');
@@ -65,28 +76,28 @@ export async function syncImdbCatalog(store: CatalogStore, options: {
         startYear: optionalNumber(startYear), endYear: optionalNumber(endYear), runtimeMinutes: optionalNumber(runtime),
         genres: rawGenres === '\\N' ? [] : rawGenres.split(',').filter(Boolean).map(genre => GENRES[genre] ?? genre), adult: adult === '1' });
       processed++;
-      if (titles.length >= BATCH) { stopIfCancelled(); store.upsertTitles(titles.splice(0), token); if (processed % 20_000 === 0) report('Import des titres'); }
+      if (titles.length >= BATCH) { stopIfCancelled(); store.upsertTitles(titles.splice(0), token); tick('Import des titres'); }
     }
     stopIfCancelled();
     store.upsertTitles(titles, token); store.finishDataset('basics', token);
 
-    processed = 0; report('Import des notes');
+    report('Import des notes');
     const ratings: CatalogRatingInput[] = []; first = true;
     for await (const line of await linesFromGzip(`${BASE}/title.ratings.tsv.gz`, fetcher, options.signal)) {
       if (first) { first = false; continue; }
       const [imdbId, rating, votes] = line.split('\t'); ratings.push({ imdbId, rating:Number(rating)||0, votes:Number(votes)||0 }); processed++;
-      if (ratings.length >= BATCH) { stopIfCancelled(); store.upsertRatings(ratings.splice(0)); if (processed % 20_000 === 0) report('Import des notes'); }
+      if (ratings.length >= BATCH) { stopIfCancelled(); store.upsertRatings(ratings.splice(0)); tick('Import des notes'); }
     }
     stopIfCancelled();
     store.upsertRatings(ratings);
 
-    processed = 0; report('Import des saisons et épisodes');
+    report('Import des saisons et épisodes');
     const episodes: CatalogEpisodeInput[] = []; first = true;
     for await (const line of await linesFromGzip(`${BASE}/title.episode.tsv.gz`, fetcher, options.signal)) {
       if (first) { first = false; continue; }
       const [imdbId, parentImdbId, season, episode] = line.split('\t');
       episodes.push({ imdbId, parentImdbId, season:optionalNumber(season), episode:optionalNumber(episode) }); processed++;
-      if (episodes.length >= BATCH) { stopIfCancelled(); store.upsertEpisodes(episodes.splice(0), token); if (processed % 20_000 === 0) report('Import des saisons et épisodes'); }
+      if (episodes.length >= BATCH) { stopIfCancelled(); store.upsertEpisodes(episodes.splice(0), token); tick('Import des saisons et épisodes'); }
     }
     stopIfCancelled();
     store.upsertEpisodes(episodes, token); store.finishDataset('episodes', token);
