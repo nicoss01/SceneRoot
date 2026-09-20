@@ -65,6 +65,22 @@ describe('CatalogStore', () => {
     expect(last.hasMore).toBe(false);
   });
 
+  it('finds a title by a word in the middle once the search index is built', () => {
+    const store = fresh();
+    store.upsertTitles([
+      { imdbId:'tt700', kind:'serie', primaryTitle:"Grey's Anatomy", startYear:2005, genres:[], adult:false, votes:9000 },
+      { imdbId:'tt701', kind:'film', primaryTitle:'Anatomie du silence', startYear:2018, genres:[], adult:false, votes:10 },
+    ], 'sync');
+    expect(store.rebuildSearchIndex()).toBe(2);
+    // « anatomy » n'est pas un début de titre : seul l'index plein texte le trouve.
+    expect(store.query({ page:1, limit:10, query:'anatomy' }).items.map(row => row.imdbId)).toEqual(['tt700']);
+    // Les accents ne doivent pas faire échouer la recherche.
+    expect(store.query({ page:1, limit:10, query:'anatomie' }).items.map(row => row.imdbId)).toContain('tt701');
+    // Plusieurs mots : tous doivent correspondre, même partiellement saisis.
+    expect(store.query({ page:1, limit:10, query:'grey anat' }).items.map(row => row.imdbId)).toEqual(['tt700']);
+    expect(store.query({ page:1, limit:10, query:'zzzz' }).items).toHaveLength(0);
+  });
+
   it('removes rows absent from a completed IMDb generation', () => {
     const store = fresh();
     store.upsertTitles([{ imdbId:'tt1', kind:'film', primaryTitle:'Old', genres:[], adult:false }], 'old');

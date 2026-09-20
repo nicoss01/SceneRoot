@@ -28,6 +28,7 @@ import { WatchedContext } from './context/watched';
 import { formatBytes, formatDateTime } from './lib/format';
 import { matchesDuration, matchesSearchFilters, type DurationBucket } from './lib/filters';
 import { DownloadPanel } from './components/DownloadPanel';
+import { TorrentUpload } from './components/TorrentUpload';
 import { QRCode } from './components/QRCode';
 import { SetupWizard } from './components/SetupWizard';
 import { TasteTree } from './components/TasteTree';
@@ -133,6 +134,7 @@ function SearchPage() {
   const catalog=useCatalog(type==='all'?undefined:type,20,true,selectedGenre,debouncedQuery);
   const results=catalog.items.filter(item=>matchesSearchFilters(item,{duration,minRating,quality}));
   useEffect(()=>{const node=sentinel.current;if(!node)return;const observer=new IntersectionObserver(entries=>{if(entries[0]?.isIntersecting&&!catalog.loading&&catalog.hasMore)void catalog.loadMore()},{rootMargin:'420px'});observer.observe(node);return()=>observer.disconnect()},[catalog.hasMore,catalog.loadMore,catalog.loading]);
+  const [tab,setTab]=useState<'search'|'torrent'>('search');
   const reset=()=>{setQuery('');setSelectedGenre('');setType('all');setDuration('any');setMinRating(0);setQuality('')};
   // Télécommande de recherche : le téléphone dépose une requête, l'écran la
   // reprend. On ignore l'état déjà en place à l'arrivée sur la page.
@@ -157,13 +159,19 @@ function SearchPage() {
     const timer=setInterval(()=>void poll(),2000);
     return()=>{active=false;clearInterval(timer)};
   },[]);
-  return <><label className="searchbox"><Search/><input autoFocus value={query} onChange={e=>setQuery(e.target.value)} placeholder="Rechercher un film ou une série…"/><kbd>OK</kbd></label>
+  return <>
+    <div className="search-tabs">
+      <button className={tab==='search'?'on':''} onClick={()=>setTab('search')}><Search/> Rechercher</button>
+      <button className={tab==='torrent'?'on':''} onClick={()=>setTab('torrent')}><Download/> Charger un torrent</button>
+    </div>
+    {tab==='torrent'&&<TorrentUpload/>}
+    {tab==='search'&&<><label className="searchbox"><Search/><input autoFocus value={query} onChange={e=>setQuery(e.target.value)} placeholder="Rechercher un film ou une série…"/><kbd>OK</kbd></label>
     {remoteUrl&&<div className="search-remote"><QRCode value={remoteUrl} size={132}/><div><h3>Chercher depuis votre téléphone</h3><p>Scannez ce QR code pour saisir le texte et régler les filtres depuis le mobile : l’écran suit en direct.</p><small>{remoteUrl}</small></div></div>}
     <div className="search-filter-title"><h2>Filtres</h2><button onClick={reset}><RefreshCw/> Réinitialiser les filtres</button></div>
     <div className="search-filters"><div className="filter-panel"><h3><Film/>Type</h3><div>{([['all','Tous'],['film','Films'],['serie','Séries']] as const).map(([value,label])=><button className={type===value?'on':''} onClick={()=>setType(value)} key={value}>{label}</button>)}</div></div><div className="filter-panel"><h3><Timer/>Durée</h3><div>{([['short','< 1h30'],['medium','1h30 – 2h'],['long','> 2h']] as const).map(([value,label])=><button className={duration===value?'on':''} onClick={()=>setDuration(current=>current===value?'any':value)} key={value}>{label}</button>)}</div></div><div className="filter-panel"><h3><Star/>Notes utilisateurs</h3><div>{[5,7,8].map(value=><button className={minRating===value?'on':''} onClick={()=>setMinRating(current=>current===value?0:value)} key={value}>≥ {value}</button>)}</div></div><div className="filter-panel"><h3><Monitor/>Qualité</h3><div>{(['720p','1080p','4K'] as const).map(value=><button className={quality===value?'on':''} onClick={()=>setQuality(current=>current===value?'':value)} key={value}>{value}</button>)}</div></div></div>
     <div className="genre-filter"><h3><Sparkles/>Tous les genres</h3><div>{allGenres.map(genre=><button className={selectedGenre===genre?'on':''} onClick={()=>setSelectedGenre(current=>current===genre?'':genre)} key={genre}>{genre}</button>)}</div></div>
     <div className="section-title"><h2>{query?`Résultats pour « ${query} »`:selectedGenre||'Tous les contenus'}</h2><span>{catalog.source?`${results.length} résultats · ${catalog.source}`:`${results.length} résultats`}</span></div>
-    <div className="grid">{results.map((m,i)=><MediaCard item={m} active={i===0} key={m.id} onOpen={()=>navigate(`/title/${m.id}`)}/>)}</div><div className="catalog-sentinel" ref={sentinel}>{catalog.loading&&<><i/>Recherche dans le catalogue…</>}{catalog.error&&<button className="secondary" onClick={()=>catalog.loadMore()}>Réessayer</button>}{!catalog.loading&&!results.length&&<span>Aucun titre ne correspond encore à ces filtres.</span>}</div></>;
+    <div className="grid">{results.map((m,i)=><MediaCard item={m} active={i===0} key={m.id} onOpen={()=>navigate(`/title/${m.id}`)}/>)}</div><div className="catalog-sentinel" ref={sentinel}>{catalog.loading&&<><i/>Recherche dans le catalogue…</>}{catalog.error&&<button className="secondary" onClick={()=>catalog.loadMore()}>Réessayer</button>}{!catalog.loading&&!results.length&&<span>Aucun titre ne correspond encore à ces filtres.</span>}</div></>}</>;
 }
 
 type Mood = 'Détente'|'Action'|'Émotion'|'Frissons'|'Découverte';

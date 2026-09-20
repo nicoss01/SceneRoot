@@ -99,6 +99,11 @@ function rowFromSql(raw: Record<string, unknown>): CatalogRow {
   };
 }
 
+/** Plafond de candidats remontés par l'index plein texte pour une recherche. */
+const SEARCH_CANDIDATES = 400;
+/** Découpe une saisie en mots, quels que soient les séparateurs et la casse. */
+const SPLIT_WORDS = new RegExp('[^\\p{L}\\p{N}]+', 'u');
+
 export class CatalogStore {
   readonly available: boolean;
   readonly file: string;
@@ -168,6 +173,83 @@ export class CatalogStore {
         CREATE INDEX IF NOT EXISTS idx_catalog_browse_recent ON catalog_titles(browsable, start_year DESC, votes DESC, rating DESC);
       `);
     } catch { /* colonne générée indisponible : on reste sur les index d'origine */ }
+    // Index plein texte : chercher « anatomy » dans « Grey's Anatomy » impose
+    // sinon un LIKE '%...%', donc un parcours de toute la table — plusieurs
+    // secondes par frappe sur un catalogue IMDb complet.
+    try {
+      this.db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS catalog_search USING fts5(imdb_id UNINDEXED, text, tokenize='unicode61 remove_diacritics 2')");
+      this.searchIndex = true;
+    } catch { this.searchIndex = false; /* FTS5 absent : on retombe sur LIKE */ }
+  }
+
+  /** Vrai quand la table plein texte existe. */
+  private searchIndex = false;
+
+  /** Nombre d'entrées indexées, 0 quand l'index reste à construire. */
+  searchIndexSize(): number {
+    if (!this.db || !this.searchIndex) return 0;
+    const cached = this.counts.get('search');
+    if (cached !== undefined) return cached;
+    try {
+      const value = Number((this.db.prepare('SELECT COUNT(*) AS n FROM catalog_search').get() as { n: number }).n);
+      this.counts.set('search', value);
+      return value;
+    } catch { return 0 }
+  }
+
+  /**
+   * Vrai quand l'index couvre l'ensemble des titres parcourables. La
+   * comparaison se fait sur le nombre de lignes indexables, et non sur count(),
+   * qui inclut les titres pour adultes écartés de l'index.
+   */
+  private searchIndexFresh(): boolean {
+    if (!this.db) return false;
+    const indexed = this.searchIndexSize();
+    if (!indexed) return false;
+    const cached = this.counts.get('browsable');
+    let expected = cached;
+    if (expected === undefined) {
+      try {
+        expected = Number((this.db.prepare('SELECT COUNT(*) AS n FROM catalog_titles WHERE browsable = 1').get() as { n: number }).n);
+        this.counts.set('browsable', expected);
+      } catch { return true }
+    }
+    return indexed >= expected;
+  }
+
+  /**
+   * (Re)construit l'index de recherche à partir des titres. Un seul parcours,
+   * à lancer après un import : quelques secondes pour des centaines de milliers
+   * de titres, contre plusieurs secondes par recherche sans lui.
+   */
+  rebuildSearchIndex(): number {
+    if (!this.db || !this.searchIndex) return 0;
+    try {
+      this.db.exec('DELETE FROM catalog_search');
+      this.db.exec(`
+        INSERT INTO catalog_search(imdb_id, text)
+        SELECT t.imdb_id,
+               t.primary_title || ' ' || COALESCE(t.original_title, '') || ' ' || COALESCE(l.title_fr, '')
+        FROM catalog_titles t LEFT JOIN catalog_localized l ON l.imdb_id = t.imdb_id
+        WHERE t.browsable = 1
+      `);
+      return this.searchIndexSize();
+    } catch { return 0 }
+  }
+
+  /** Réindexe un titre dont le titre français vient d'arriver. */
+  private indexOne(imdbId: string): void {
+    if (!this.db || !this.searchIndex) return;
+    try {
+      this.db.prepare('DELETE FROM catalog_search WHERE imdb_id = ?').run(imdbId);
+      this.db.prepare(`
+        INSERT INTO catalog_search(imdb_id, text)
+        SELECT t.imdb_id,
+               t.primary_title || ' ' || COALESCE(t.original_title, '') || ' ' || COALESCE(l.title_fr, '')
+        FROM catalog_titles t LEFT JOIN catalog_localized l ON l.imdb_id = t.imdb_id
+        WHERE t.imdb_id = ? AND t.browsable = 1
+      `).run(imdbId);
+    } catch { /* index facultatif */ }
   }
 
   /**
@@ -178,7 +260,7 @@ export class CatalogStore {
   reset(): void {
     if (!this.db) return;
     this.invalidateCounts();
-    this.db.exec('DROP TABLE IF EXISTS catalog_titles; DROP TABLE IF EXISTS catalog_episodes; DROP TABLE IF EXISTS catalog_localized; DROP TABLE IF EXISTS catalog_sync;');
+    this.db.exec('DROP TABLE IF EXISTS catalog_titles; DROP TABLE IF EXISTS catalog_episodes; DROP TABLE IF EXISTS catalog_localized; DROP TABLE IF EXISTS catalog_sync; DROP TABLE IF EXISTS catalog_search;');
     this.migrate();
     try { this.db.exec('VACUUM') } catch { /* compactage facultatif */ }
   }
@@ -215,7 +297,7 @@ export class CatalogStore {
     if (input.maxYear) { base.push('(t.start_year IS NULL OR t.start_year <= ?)'); baseParams.push(input.maxYear); }
 
     const search = input.query?.trim();
-    const escaped = search?.replace(/[%_]/g, value => `\${value}`);
+    const escaped = search?.replace(/[\\%_]/g, value => '\\' + value);
     const order = input.sort === 'recent' ? 't.start_year DESC, t.votes DESC, t.rating DESC' : 't.votes DESC, t.rating DESC, t.start_year DESC';
     const offset = (Math.max(1, input.page) - 1) * input.limit;
 
@@ -225,10 +307,10 @@ export class CatalogStore {
       const where = base.slice();
       const params = baseParams.slice();
       if (pattern && titleOnly) {
-        where.push('t.primary_title LIKE ?');
+        where.push("t.primary_title LIKE ? ESCAPE '\\'");
         params.push(pattern);
       } else if (pattern) {
-        where.push('(t.primary_title LIKE ? COLLATE NOCASE OR t.original_title LIKE ? COLLATE NOCASE OR l.title_fr LIKE ? COLLATE NOCASE)');
+        where.push("(t.primary_title LIKE ? ESCAPE '\\' COLLATE NOCASE OR t.original_title LIKE ? ESCAPE '\\' COLLATE NOCASE OR l.title_fr LIKE ? ESCAPE '\\' COLLATE NOCASE)");
         params.push(pattern, pattern, pattern);
       }
       const clause = where.join(' AND ');
@@ -241,12 +323,18 @@ export class CatalogStore {
       return { rows, clause, params };
     };
 
-    // Un titre cherché commence presque toujours par ce qui est saisi, et
-    // « commence par » s'appuie sur l'index des titres : réponse immédiate.
-    // Le « contient », lui, parcourt toute la table et n'intervient que si la
-    // première tentative ne remplit pas la page.
-    let result = fetch(escaped ? `${escaped}%` : undefined, true);
-    if (escaped && result.rows.length <= input.limit) result = fetch(`%${escaped}%`);
+    // L'index plein texte trouve un mot où qu'il soit dans le titre sans
+    // parcourir la table. À défaut (index pas encore construit), on tente le
+    // « commence par », qui s'appuie sur l'index des titres, puis en dernier
+    // recours le « contient », qui balaie tout le catalogue.
+    let result = search ? this.fetchByIds(this.searchIds(search), base, baseParams, order, input.limit, offset) : undefined;
+    // Un index incomplet (import en cours, mise à jour récente) ne doit pas
+    // faire croire qu'il n'y a rien : on repasse alors par les titres.
+    if (result && !result.rows.length && !this.searchIndexFresh()) result = undefined;
+    if (!result) {
+      result = fetch(escaped ? `${escaped}%` : undefined, true);
+      if (escaped && result.rows.length <= input.limit) result = fetch(`%${escaped}%`);
+    }
 
     const hasMore = result.rows.length > input.limit;
     const items = (hasMore ? result.rows.slice(0, input.limit) : result.rows).map(rowFromSql);
@@ -254,6 +342,38 @@ export class CatalogStore {
     // complet pour une simple indication : on rapporte ce que l'on a vu.
     const total = search ? offset + items.length + (hasMore ? 1 : 0) : this.total(result.clause, result.params);
     return { items, total, hasMore };
+  }
+
+  /**
+   * Identifiants correspondant à une recherche, via l'index plein texte.
+   * Chaque mot saisi est traité comme un début de mot : « grey ana » trouve
+   * « Grey's Anatomy ». Renvoie null quand l'index n'est pas exploitable.
+   */
+  private searchIds(search: string): string[] | null {
+    if (!this.db || !this.searchIndex) return null;
+    const words = search.toLowerCase().split(SPLIT_WORDS).filter(Boolean);
+    if (!words.length) return null;
+    const match = words.map(word => `"${word.replace(/"/g, '""')}"*`).join(' ');
+    try {
+      const rows = this.db.prepare('SELECT imdb_id FROM catalog_search WHERE catalog_search MATCH ? LIMIT ?').all(match, SEARCH_CANDIDATES) as Array<{ imdb_id: string }>;
+      return rows.map(row => String(row.imdb_id));
+    } catch { return null }
+  }
+
+  /** Applique les filtres et le tri habituels à une liste d'identifiants. */
+  private fetchByIds(ids: string[] | null, base: string[], baseParams: unknown[], order: string, limit: number, offset: number) {
+    if (!this.db || ids === null) return undefined;
+    if (!ids.length) return { rows: [] as Array<Record<string, unknown>>, clause: '0', params: [] as unknown[] };
+    const where = [...base, `t.imdb_id IN (${ids.map(() => '?').join(',')})`];
+    const params = [...baseParams, ...ids];
+    const clause = where.join(' AND ');
+    const rows = this.db.prepare(`
+      SELECT t.*, l.title_fr, l.overview_fr, l.poster, l.backdrop, l.age_rating, l.tmdb_id, l.tvmaze_id,
+             l.wikidata_id, l.metadata_source, l.metadata_checked_at, l.wikidata_checked_at
+      FROM catalog_titles t LEFT JOIN catalog_localized l ON l.imdb_id=t.imdb_id
+      WHERE ${clause} ORDER BY ${order} LIMIT ? OFFSET ?
+    `).all(...params, limit + 1, offset) as Array<Record<string, unknown>>;
+    return { rows, clause, params };
   }
 
   /** Nombre de titres correspondant à un filtre, mémorisé d'une requête à l'autre. */
@@ -355,6 +475,7 @@ export class CatalogStore {
       metadata_checked_at=CASE WHEN excluded.metadata_source='wikidata' THEN catalog_localized.metadata_checked_at ELSE excluded.metadata_checked_at END,
       wikidata_checked_at=COALESCE(excluded.wikidata_checked_at,catalog_localized.wikidata_checked_at)`)
       .run(value.imdbId,value.titleFr??null,value.overviewFr??null,value.poster??null,value.backdrop??null,value.ageRating??null,value.tmdbId??null,value.tvmazeId??null,value.wikidataId??null,value.source,value.source==='wikidata'?new Date(0).toISOString():checkedAt,value.source==='wikidata'?checkedAt:null);
+    this.indexOne(value.imdbId);
   }
 
   setSync(state: CatalogSyncState): void {

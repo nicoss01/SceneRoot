@@ -309,7 +309,7 @@ function catalogSources():CatalogSyncState[]{
 function lastCatalogSync(){return catalogStore.syncStates().find(state=>state.source==='imdb'&&state.status==='complete')?.completedAt}
 function nextCatalogSync(){if(!loadDb().settings.catalogSyncEnabled)return undefined;const last=lastCatalogSync();return new Date(last?Date.parse(last)+catalogSyncIntervalMs:Date.now()).toISOString()}
 function hasCatalogSyncSpace(){try{const disk=statfsSync(dataDir);return disk.bavail*disk.bsize>=Math.max(1,Number(process.env.SCENEROOT_CATALOG_MIN_FREE_GB??4))*1024**3}catch{return true}}
-function startImdbSync(){if(imdbSyncPromise)return imdbSyncPromise;if(!hasCatalogSyncSpace()){const message='Espace insuffisant pour importer les jeux de données IMDb.';catalogStore.setSync({source:'imdb',status:'error',phase:'Synchronisation bloquée',processed:0,error:message});app.log.warn(message);return Promise.resolve()}imdbSyncStop=new AbortController();imdbSyncPromise=syncImdbCatalog(catalogStore,{signal:imdbSyncStop.signal,onProgress:progress=>app.log.info(progress,'IMDb catalogue synchronization')}).then(()=>{app.log.info('Mise à jour des statistiques SQLite');catalogStore.analyze()}).catch(error=>{app.log.error({error},'IMDb catalogue synchronization failed')}).finally(()=>{imdbSyncPromise=null});return imdbSyncPromise}
+function startImdbSync(){if(imdbSyncPromise)return imdbSyncPromise;if(!hasCatalogSyncSpace()){const message='Espace insuffisant pour importer les jeux de données IMDb.';catalogStore.setSync({source:'imdb',status:'error',phase:'Synchronisation bloquée',processed:0,error:message});app.log.warn(message);return Promise.resolve()}imdbSyncStop=new AbortController();imdbSyncPromise=syncImdbCatalog(catalogStore,{signal:imdbSyncStop.signal,onProgress:progress=>app.log.info(progress,'IMDb catalogue synchronization')}).then(()=>{app.log.info('Mise à jour des statistiques SQLite');catalogStore.analyze();const indexed=catalogStore.rebuildSearchIndex();app.log.info({indexed},'Index de recherche reconstruit')}).catch(error=>{app.log.error({error},'IMDb catalogue synchronization failed')}).finally(()=>{imdbSyncPromise=null});return imdbSyncPromise}
 app.get('/api/catalog/status',async()=>({available:catalogStore.available,total:catalogStore.count(),syncing:Boolean(imdbSyncPromise),sources:catalogSources(),progress:catalogProgress(catalogSources().find(state=>state.source==='imdb')),databaseBytes:catalogStore.sizeBytes(),lastSyncAt:lastCatalogSync(),nextSyncAt:nextCatalogSync(),intervalHours:catalogSyncIntervalMs/3_600_000,tmdb:{configured:Boolean(tmdbApiKey()),source:tmdbConfiguredByEnvironment?'environment':tmdbApiKey()?'settings':'none'},architecture:{titles:'IMDb Datasets',frenchMetadata:'TMDB',episodes:'TMDB + TVmaze',identifiers:'Wikidata',fallback:'Wikipédia'}}));
 app.post('/api/catalog/sync/stop',async(_request,reply)=>{
   if(!imdbSyncPromise)return reply.code(409).send({error:'Aucune synchronisation en cours'});
@@ -558,6 +558,39 @@ async function torrentPayload(link:string):Promise<{filename:string}|{metainfo:s
   }catch(error){return{error:`Téléchargement du .torrent impossible : ${(error as Error).message}`}}
 }
 function ensureTransmissionSession(){return transmission('session-set',{'download-queue-enabled':true,'download-queue-size':3,'download-dir':downloadDir}).catch(()=>{/* Transmission non configuré : appliqué dès qu'il est disponible */})}
+/**
+ * Ajout d'un fichier .torrent déposé depuis l'interface. Le contenu arrive en
+ * base64 : un fichier torrent est un dictionnaire bencodé, il commence donc
+ * toujours par « d ». Un aimant collé est accepté de la même façon.
+ */
+app.post<{Body:{name?:string;metainfo?:string;magnet?:string}}>('/api/downloads/torrent',{
+  bodyLimit:8*1024*1024,
+  schema:{body:{type:'object',properties:{name:{type:'string',maxLength:255},metainfo:{type:'string',maxLength:11*1024*1024},magnet:{type:'string',maxLength:4096}}}},
+},async(request,reply)=>{
+  const magnet=request.body.magnet?.trim();
+  const metainfo=request.body.metainfo?.trim();
+  if(!magnet&&!metainfo)return reply.code(400).send({error:'Déposez un fichier .torrent ou collez un lien magnet.'});
+  let args:Record<string,unknown>;
+  if(magnet){
+    if(!/^(magnet:\?|https?:\/\/)/i.test(magnet))return reply.code(400).send({error:'Lien invalide : un aimant commence par « magnet:? ».'});
+    const payload=await torrentPayload(magnet);
+    if('error' in payload)return reply.code(502).send({error:payload.error});
+    args={...payload};
+  }else{
+    let decoded:Buffer;
+    try{decoded=Buffer.from(metainfo!,'base64')}catch{return reply.code(400).send({error:'Fichier illisible'})}
+    if(!decoded.length||decoded.subarray(0,1).toString()!=='d')return reply.code(400).send({error:'Ce fichier n’est pas un .torrent valide.'});
+    args={metainfo:decoded.toString('base64')};
+  }
+  try{
+    await ensureTransmissionSession();
+    const response=await transmission('torrent-add',{...args,'download-dir':downloadDir,paused:false});
+    const payload=await response.json().catch(()=>({})) as {result?:string;arguments?:Record<string,unknown>};
+    if(!response.ok)return reply.code(502).send({error:transmissionHttpError(response.status)});
+    if(payload.result&&payload.result!=='success')return reply.code(502).send({error:`Transmission : ${payload.result}`});
+    return reply.send(payload);
+  }catch(error){return reply.code((error as {statusCode?:number}).statusCode??503).send({error:transmissionError(error)})}
+});
 app.post<{Body:{magnet:string;expectedBytes?:number}}>('/api/downloads', {schema:{body:{type:'object',required:['magnet'],properties:{magnet:{type:'string',minLength:8},expectedBytes:{type:'number',minimum:0}}}}}, async (request,reply)=>{
   const source=request.body.magnet; if(!source||!/^(magnet:\?|https?:\/\/)/i.test(source)) return reply.code(400).send({error:'Lien de téléchargement invalide (magnet ou URL .torrent attendu)'});
   const targetRoot=mediaRoots.find(existsSync)??dataDir;const disk=statfsSync(targetRoot);const available=disk.bavail*disk.bsize;const gb=(n:number)=>`${(n/1024**3).toFixed(1)} Go`;const reserve=Number(loadDb().settings.minFreeGb??process.env.SCENEROOT_MIN_FREE_GB??5)*1024**3;if(available-(request.body.expectedBytes??0)<reserve)return reply.code(507).send({error:`Espace disque insuffisant sur ${targetRoot} : ${gb(available)} libres, réserve de ${gb(reserve)} exigée. Baissez la réserve dans les réglages.`,available,reserve,expectedBytes:request.body.expectedBytes??0});
@@ -671,6 +704,13 @@ writeMpvInput();
 // Sans statistiques, SQLite ignore l'index des titres : la recherche devient
 // interminable dès quelques centaines de milliers de lignes.
 if(catalogStore.needsAnalyze())setTimeout(()=>catalogStore.analyze(),5000).unref();
+// L'index plein texte manque après une mise à jour de SceneRoot ou un import
+// antérieur : on le construit une fois, sans bloquer le démarrage.
+setTimeout(()=>{
+  if(!catalogStore.count()||catalogStore.searchIndexSize())return;
+  const indexed=catalogStore.rebuildSearchIndex();
+  app.log.info({indexed},'Index de recherche construit');
+},8000).unref();
 void ensureTransmissionSession();
 setInterval(()=>{try{purgeExpiredGuests()}catch(error){app.log.warn({error},'Guest purge failed')}},5*60_000).unref();
 function warmRecentCatalog(){void catalogFor('film',1,12,true).catch(()=>{});void catalogFor('serie',1,12,true).catch(()=>{})}
