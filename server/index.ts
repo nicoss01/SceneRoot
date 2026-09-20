@@ -25,7 +25,7 @@ import { syncImdbCatalog } from './lib/imdbSync.js';
 type Rating = { profileId: string; mediaId: string; score: number; tags: string[]; at: string };
 type ProfileRecord = { id:string; name:string; ageLimit:number; avatar:string; accent:string; pinHash?:string; createdAt:string };
 type MediaMetadata = { provider:'tmdb'|'tvmaze'|'wikipedia'; providerId:number|string; title:string; originalTitle?:string; overview?:string; poster?:string; backdrop?:string; genres?:string[]; releaseDate?:string; ageRating?:string; runtime?:number; sourceUrl?:string; informationSource?:string };
-type PlaybackEntry = { position:number; duration:number; updatedAt:string };
+type PlaybackEntry = { position:number; duration:number; updatedAt:string; dismissed?:boolean };
 type Settings = { minFreeGb?:number; preferredQuality?:string; preferredAudio?:AudioPreference; preferredLanguages?:string[]; preferHdr?:boolean; torznabSources?:TorznabSource[]; setupComplete?:boolean; adminToken?:string; tmdbApiKey?:string; catalogSyncEnabled?:boolean };
 type GuestSession = { id:string; ageLimit:number; createdAt:string; expiresAt:number|null; ephemeral:boolean };
 type MediaPref = { profileId:string; mediaId:string; at:string };
@@ -119,7 +119,7 @@ function spawnMpv(path:string,start:number){
   mpvProcess.on('exit',()=>{mpvProcess=null});
   mpvProcess.on('error',error=>app.log.warn({error},'mpv failed'));
 }
-function playbackEntry(value:unknown):PlaybackEntry|null{if(value==null)return null;if(typeof value==='number')return{position:value,duration:0,updatedAt:new Date(0).toISOString()};const v=value as Partial<PlaybackEntry>;return typeof v.position==='number'?{position:v.position,duration:Number(v.duration??0),updatedAt:String(v.updatedAt??new Date(0).toISOString())}:null}
+function playbackEntry(value:unknown):PlaybackEntry|null{if(value==null)return null;if(typeof value==='number')return{position:value,duration:0,updatedAt:new Date(0).toISOString()};const v=value as Partial<PlaybackEntry>;return typeof v.position==='number'?{position:v.position,duration:Number(v.duration??0),updatedAt:String(v.updatedAt??new Date(0).toISOString()),dismissed:v.dismissed===true}:null}
 mkdirSync(dataDir, { recursive: true });
 mkdirSync(cacheDir, { recursive: true });
 try{mkdirSync(downloadDir,{recursive:true})}catch{/* racine média absente en dev */}
@@ -516,9 +516,24 @@ app.get<{Params:{id:string}}>('/api/media/:id', async (request, reply) => {
 });
 app.post<{Body:Rating}>('/api/ratings', {schema:{body:{type:'object',required:['profileId','mediaId','score'],properties:{profileId:{type:'string',minLength:1},mediaId:{type:'string',minLength:1},score:{type:'number',minimum:0,maximum:10},tags:{type:'array',items:{type:'string'}}}}}}, async request => { const db=loadDb(); const rating={...request.body,at:new Date().toISOString()}; db.ratings=db.ratings.filter(x=>!(x.profileId===rating.profileId&&x.mediaId===rating.mediaId));db.ratings.push(rating);saveDb(db);return rating; });
 app.put<{Params:{profileId:string;mediaId:string};Body:{position:number;duration?:number}}>('/api/playback/:profileId/:mediaId', {schema:{body:{type:'object',required:['position'],properties:{position:{type:'number',minimum:0},duration:{type:'number',minimum:0}}}}}, async request=>{const db=loadDb();db.playback[`${request.params.profileId}:${request.params.mediaId}`]={position:Number(request.body.position)||0,duration:Number(request.body.duration)||0,updatedAt:new Date().toISOString()};saveDb(db);return{ok:true}});
-app.get<{Params:{profileId:string}}>('/api/playback/:profileId',async request=>{const db=loadDb();const groups=groupLibrary(db.library);const prefix=`${request.params.profileId}:`;return Object.entries(db.playback).filter(([key])=>key.startsWith(prefix)).map(([key,value])=>{const entry=playbackEntry(value);if(!entry)return null;const mediaId=key.slice(prefix.length);const group=groupForMedia(groups,mediaId);if(!group)return null;const progress=entry.duration>0?entry.position/entry.duration:0;return{group,mediaId,position:entry.position,duration:entry.duration,progress,updatedAt:entry.updatedAt,completed:progress>=0.92}}).filter((entry): entry is NonNullable<typeof entry>=>entry!==null&&!entry.completed).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt))});
+app.get<{Params:{profileId:string}}>('/api/playback/:profileId',async request=>{const db=loadDb();const groups=groupLibrary(db.library);const prefix=`${request.params.profileId}:`;return Object.entries(db.playback).filter(([key])=>key.startsWith(prefix)).map(([key,value])=>{const entry=playbackEntry(value);if(!entry)return null;const mediaId=key.slice(prefix.length);const group=groupForMedia(groups,mediaId);if(!group)return null;const progress=entry.duration>0?entry.position/entry.duration:0;return{group,mediaId,position:entry.position,duration:entry.duration,progress,updatedAt:entry.updatedAt,completed:progress>=0.92,dismissed:entry.dismissed===true}}).filter((entry): entry is NonNullable<typeof entry>=>entry!==null&&!entry.completed&&!entry.dismissed).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt))});
 app.get<{Params:{profileId:string}}>('/api/history/:profileId',async request=>{const db=loadDb();const groups=groupLibrary(db.library);const prefix=`${request.params.profileId}:`;const seen=new Map<string,{group:LibraryGroup;mediaId:string;progress:number;position:number;duration:number;updatedAt:string;completed:boolean;rating?:number;tags?:string[]}>();for(const[key,value]of Object.entries(db.playback)){if(!key.startsWith(prefix))continue;const entry=playbackEntry(value);if(!entry)continue;const mediaId=key.slice(prefix.length);const group=groupForMedia(groups,mediaId);if(!group)continue;const progress=entry.duration>0?entry.position/entry.duration:0;seen.set(group.id,{group,mediaId,progress,position:entry.position,duration:entry.duration,updatedAt:entry.updatedAt,completed:progress>=0.92})}for(const rating of db.ratings.filter(r=>r.profileId===request.params.profileId)){const group=groupForMedia(groups,rating.mediaId);if(!group)continue;const existing=seen.get(group.id);if(existing){existing.rating=rating.score;existing.tags=rating.tags;if(rating.at>existing.updatedAt)existing.updatedAt=rating.at}else seen.set(group.id,{group,mediaId:rating.mediaId,progress:0,position:0,duration:0,updatedAt:rating.at,completed:true,rating:rating.score,tags:rating.tags})}return[...seen.values()].sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt))});
 app.get<{Params:{profileId:string}}>('/api/ratings/:profileId',async request=>loadDb().ratings.filter(rating=>rating.profileId===request.params.profileId));
+/**
+ * Retire (ou remet) un média de la reprise de lecture, sans perdre la position :
+ * un film commencé sans envie de le finir ne doit pas encombrer l'accueil, mais
+ * sa fiche doit toujours proposer de reprendre. Relancer la lecture le fait
+ * réapparaître.
+ */
+app.post<{Params:{profileId:string;mediaId:string};Body:{dismissed?:boolean}}>('/api/playback/:profileId/:mediaId/dismiss',{schema:{body:{type:'object',properties:{dismissed:{type:'boolean'}}}}},async(request,reply)=>{
+  const db=loadDb();const key=`${request.params.profileId}:${request.params.mediaId}`;
+  const entry=playbackEntry(db.playback[key]);
+  if(!entry)return reply.code(404).send({error:'Aucune lecture en cours pour ce média'});
+  const dismissed=request.body?.dismissed!==false;
+  db.playback[key]={...entry,dismissed};
+  saveDb(db);
+  return{ok:true,dismissed};
+});
 /**
  * Oublie une progression : sert au bouton « déjà vu » de la fiche, qui écrit
  * une progression complète et doit pouvoir être annulé.

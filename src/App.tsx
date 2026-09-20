@@ -82,8 +82,8 @@ function WatchedProvider({profileId,children}:{profileId:string;children:React.R
   useEffect(()=>{let active=true;const load=()=>fetch(`/api/watched/${encodeURIComponent(profileId)}`).then(response=>response.ok?response.json():[]).then((ids:string[])=>{if(active)setWatched(new Set(ids))}).catch(()=>{});void load();const interval=setInterval(()=>void load(),60_000);return()=>{active=false;clearInterval(interval)}},[profileId]);
   return <WatchedContext.Provider value={watched}>{children}</WatchedContext.Provider>;
 }
-function Section({ title, items, onOpen, wide = false }: { title: string; items: MediaItem[]; onOpen: (m: MediaItem) => void; wide?: boolean }) {
-  return <section><div className="section-title"><h2>{title}</h2><button>Tout voir <ChevronRight size={18}/></button></div><div className="rail">{items.map((m, i) => <MediaCard key={m.id} item={m} active={i === 0} wide={wide} onOpen={() => onOpen(m)} />)}</div></section>;
+function Section({ title, items, onOpen, onDismiss, wide = false }: { title: string; items: MediaItem[]; onOpen: (m: MediaItem) => void; onDismiss?: (m: MediaItem) => void; wide?: boolean }) {
+  return <section><div className="section-title"><h2>{title}</h2><button>Tout voir <ChevronRight size={18}/></button></div><div className="rail">{items.map((m, i) => <MediaCard key={m.id} item={m} active={i === 0} wide={wide} onOpen={() => onOpen(m)} onDismiss={onDismiss ? () => onDismiss(m) : undefined} />)}</div></section>;
 }
 
 function RemoteSection({ title, onOpen, kind, recent }: { title:string; onOpen:(item:MediaItem)=>void; kind?:'film'|'serie'; recent?:boolean }) {
@@ -100,7 +100,7 @@ function HomePage({profile}:{profile:Profile}) {
   const resumeItems=resume.items.filter(m=>!hidden.has(m.id));
   return <>
     <div className="welcome home-welcome"><h1>Bonsoir, {profile.name}</h1><p>De belles histoires vous attendent.</p></div>
-    {resumeItems.length>0&&<Section title="Reprendre la lecture" items={resumeItems.slice(0,6)} onOpen={open} wide />}
+    {resumeItems.length>0&&<Section title="Reprendre la lecture" items={resumeItems.slice(0,6)} onOpen={open} onDismiss={media=>void resume.dismiss(media.id)} wide />}
     <RemoteSection title="Dernières sorties" onOpen={open} recent />
     <RemoteSection title="Films à découvrir" onOpen={open} kind="film" />
     <RemoteSection title="Séries à découvrir" onOpen={open} kind="serie" />

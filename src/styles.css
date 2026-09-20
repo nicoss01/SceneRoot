@@ -654,3 +654,11 @@ body.hide-cursor, body.hide-cursor * { cursor: none !important; }
 .audio-choice strong { display: block; margin-bottom: 8px; font-size: 15px; font-weight: 600; }
 .audio-choice > div { display: flex; flex-wrap: wrap; gap: 8px; }
 .audio-choice small { display: block; margin-top: 8px; color: var(--muted); line-height: 1.45; }
+
+/* Enveloppe neutre pour poser le bouton de retrait : elle doit se comporter
+   comme la carte qu'elle remplace dans la grille et dans les rails. */
+.media-card-wrap { position: relative; display: block; min-width: 0; }
+.media-card-wrap > .media-card { width: 100%; }
+.media-dismiss { position: absolute; right: 10px; top: 10px; z-index: 3; display: grid; place-items: center; width: 34px; height: 34px; padding: 0; color: #cfe2f5; background: rgba(2,10,20,.78); border: 1px solid #2b5478; border-radius: 50%; opacity: 0; transition: opacity .2s ease; }
+.media-card-wrap:hover .media-dismiss, .media-card-wrap:focus-within .media-dismiss { opacity: 1; }
+.media-dismiss:focus-visible { outline: 2px solid var(--cyan); opacity: 1; }

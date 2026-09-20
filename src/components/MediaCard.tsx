@@ -1,11 +1,13 @@
-import { Eye, Play, Star } from 'lucide-react';
+import { Eye, Play, Star, X } from 'lucide-react';
 import { useWatched } from '../context/watched';
 import { posterUrl } from '../lib/image';
 import type { MediaItem } from '../types';
 
-export function MediaCard({ item, active, onOpen, wide = false }: { item: MediaItem; active?: boolean; onOpen: () => void; wide?: boolean }) {
+export function MediaCard({ item, active, onOpen, onDismiss, wide = false }: { item: MediaItem; active?: boolean; onOpen: () => void; onDismiss?: () => void; wide?: boolean }) {
   const seen = useWatched().has(item.id);
-  return <button className={`media-card focusable ${active ? 'is-active' : ''} ${wide ? 'media-card--wide' : ''}`} onClick={onOpen}>
+  return <div className="media-card-wrap">
+    {onDismiss && <button className="media-dismiss focusable" title="Retirer du tableau de bord" aria-label={`Retirer « ${item.title} » du tableau de bord`} onClick={event => { event.stopPropagation(); onDismiss(); }}><X size={16} /></button>}
+    <button className={`media-card focusable ${active ? 'is-active' : ''} ${wide ? 'media-card--wide' : ''}`} onClick={onOpen}>
     <div className="media-card__art" style={{ '--a': item.palette[0], '--b': item.palette[1] } as React.CSSProperties}>
       <img src={posterUrl(item.art)??'/assets/sceneroot-landscape.png'} alt="" loading="lazy" decoding="async" onError={event=>{event.currentTarget.onerror=null;event.currentTarget.src='/assets/sceneroot-landscape.png'}} />
       <span className="media-card__orb" />
@@ -21,5 +23,6 @@ export function MediaCard({ item, active, onOpen, wide = false }: { item: MediaI
       {item.rating > 0 && <span className="media-card__rating"><Star size={14} fill="currentColor" /> {item.rating}</span>}
       {item.progress !== undefined && <span className="progress"><i style={{ width: `${item.progress}%` }} /></span>}
     </div>
-  </button>;
+    </button>
+  </div>;
 }

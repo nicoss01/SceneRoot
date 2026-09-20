@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { rememberCatalogItems } from '../data/catalog';
 import { libraryGroupToMedia, type LibraryGroup } from '../data/library';
 import type { MediaItem } from '../types';
@@ -28,8 +28,22 @@ function useEndpoint<T>(url: string, map: (rows: T[]) => MediaItem[]) {
 }
 
 export function useResume(profileId: string) {
-  return useEndpoint<ResumeEntry>(`/api/playback/${encodeURIComponent(profileId)}`, rows =>
-    rows.map((row, index) => libraryGroupToMedia(row.group, index, Math.min(100, Math.round(row.progress * 100)))));
+  // La carte affichée porte l'identifiant du groupe ; retirer une reprise exige
+  // celui de la lecture elle-même, que l'on garde en correspondance.
+  const keys = useRef<Record<string, string>>({});
+  const result = useEndpoint<ResumeEntry>(`/api/playback/${encodeURIComponent(profileId)}`, rows => {
+    const mapped = rows.map((row, index) => ({ media: libraryGroupToMedia(row.group, index, Math.min(100, Math.round(row.progress * 100))), mediaId: row.mediaId }));
+    keys.current = Object.fromEntries(mapped.map(entry => [entry.media.id, entry.mediaId]));
+    return mapped.map(entry => entry.media);
+  });
+  const dismiss = useCallback(async (itemId: string) => {
+    const mediaId = keys.current[itemId] ?? itemId;
+    await fetch(`/api/playback/${encodeURIComponent(profileId)}/${encodeURIComponent(mediaId)}/dismiss`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dismissed: true }),
+    }).catch(() => { /* hors ligne : la carte réapparaîtra */ });
+    await result.refresh();
+  }, [profileId, result]);
+  return { ...result, dismiss };
 }
 
 export function useHistory(profileId: string) {
